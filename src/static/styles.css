@@ -349,7 +349,7 @@ input:checked + .slider:before {
 
 /* --- VISITED BUTTON --- */
 .visited-button {
-    background-color: #f6943c;
+    background-color: var(--accent-color);
     color: var(--text-color);
     padding: 8px 15px;
     border: 3px solid var(--border-color);
@@ -364,7 +364,7 @@ input:checked + .slider:before {
 
 .visited-button:hover:not(:disabled) {
     background-color: var(--text-color);
-    color: #f6943c;
+    color: var(--accent-color);
 }
 
 .visited-button:disabled {

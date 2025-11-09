@@ -143,7 +143,7 @@ func main() {
 			http.Error(w, "Error updating database: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_, err = db.Exec(`INSERT OR IGNORE INTO users (id, picture) VALUES (?,?)`, json_resp.Id, json_resp.Picture)
+		_, err = db.Exec(`INSERT OR IGNORE INTO users (id) VALUES (?)`, json_resp.Id)
 		if err != nil {
 			http.Error(w, "Error updating database: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -182,6 +182,8 @@ func main() {
 		}
 	})
 
+	// takes the user's location, cuisine prefs and risk as input from the form, and finds all the places
+	// from the database that are within the radius, sorts them by keanu's ai agent, and then renders the template
 	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
 		risk := r.URL.Query().Get("risk")
 		cuisine := r.URL.Query().Get("cuisine")
@@ -206,8 +208,8 @@ func main() {
 			return
 		}
 
-		rows, err := db.Query(`SELECT name, address, cuisine, lat, lng FROM places WHERE
-			(3959 * ACOS(COS(RADIANS(:lat)) * COS(RADIANS(lat)) * COS(RADIANS(lng) - RADIANS(:lng)) + SIN(RADIANS(:lat)) * SIN(RADIANS(lat)))) <= :radius_miles`)
+		//rows, err := db.Query(`SELECT name, address, cuisine, lat, lng FROM places WHERE
+		//	(3959 * ACOS(COS(RADIANS(:lat)) * COS(RADIANS(lat)) * COS(RADIANS(lng) - RADIANS(:lng)) + SIN(RADIANS(:lat)) * SIN(RADIANS(lat)))) <= :radius_miles`)
 	})
 
 	mux.HandleFunc("/home", func(w http.ResponseWriter, r *http.Request) {
@@ -226,11 +228,44 @@ func main() {
 			http.Error(w, "Error querying database", http.StatusBadRequest)
 			return
 		}
-		if uid != "" {
-			http.Redirect(w, r, "/home", http.StatusPermanentRedirect)
+		if uid == "" {
+			http.Redirect(w, r, "/", http.StatusPermanentRedirect)
 		}
 
 		templ, err := template.ParseFiles("template/home.html")
+		if err != nil {
+			http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		err = templ.Execute(w, nil)
+		if err != nil {
+			println("Error loading template: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("/profile", func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie("session_id")
+		if err == http.ErrNoCookie { // check if cookie is missing
+			http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+			return
+		} else if err != nil {
+			http.Error(w, "Error finding cookie: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// then check if it actually has a valid uid attached
+		var uid string
+		err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid)
+		if err != nil {
+			http.Error(w, "Error querying database", http.StatusBadRequest)
+			return
+		}
+		if uid == "" {
+			http.Redirect(w, r, "/", http.StatusPermanentRedirect)
+		}
+
+		templ, err := template.ParseFiles("template/profile.html")
 		if err != nil {
 			http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
 			return

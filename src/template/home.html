@@ -20,9 +20,7 @@
     <body id="body">
         <div class="container">
             <div class="nav">
-                <div>
-                    <a href="home.html">🏠 Home</a>
-                </div>
+                <div></div>
 
                 <div class="mode-switch">
                     <label for="mode-toggle">ANGEL</label>
@@ -35,7 +33,7 @@
 
                 <div>
                     <span style="font-family: var(--header-font)">
-                        <a href="profile.html"><u>Welcome, {{user}}!</u></a>
+                        <a href="/profile"><u>Welcome, {{.Username}}!</u></a>
                     </span>
                 </div>
             </div>
@@ -99,71 +97,52 @@
                     <p>Address: {{.Address}}</p>
                     <button class="visited-button">I VISITED THIS PLACE</button>
 
-                    <div
-                        class="rating-container hidden"
-                        data-name="The Green Sprout"
-                        data-id="GSPROUT"
-                    >
+                    <div class="rating-container hidden">
                         <p class="rating-prompt">Submit Your Rating:</p>
 
                         <form class="rating-form" method="POST" action="/rate">
                             <div class="rate">
                                 <input
                                     type="radio"
-                                    id="star1-GSPROUT"
+                                    id="star1"
                                     name="rating"
                                     value="5"
                                 />
-                                <label
-                                    for="star1-GSPROUT"
-                                    title="5 stars"
-                                ></label>
+                                <label for="star1" title="5 stars"></label>
                                 <input
                                     type="radio"
-                                    id="star2-GSPROUT"
+                                    id="star2"
                                     name="rating"
                                     value="4"
                                 />
-                                <label
-                                    for="star2-GSPROUT"
-                                    title="4 stars"
-                                ></label>
+                                <label for="star2" title="4 stars"></label>
                                 <input
                                     type="radio"
-                                    id="star3-GSPROUT"
+                                    id="star3"
                                     name="rating"
                                     value="3"
                                 />
-                                <label
-                                    for="star3-GSPROUT"
-                                    title="3 stars"
-                                ></label>
+                                <label for="star3" title="3 stars"></label>
                                 <input
                                     type="radio"
-                                    id="star4-GSPROUT"
+                                    id="star4"
                                     name="rating"
                                     value="2"
                                 />
-                                <label
-                                    for="star4-GSPROUT"
-                                    title="2 stars"
-                                ></label>
+                                <label for="star4" title="2 stars"></label>
                                 <input
                                     type="radio"
-                                    id="star5-GSPROUT"
+                                    id="star5"
                                     name="rating"
                                     value="1"
                                 />
-                                <label
-                                    for="star5-GSPROUT"
-                                    title="1 star"
-                                ></label>
+                                <label for="star5" title="1 star"></label>
                             </div>
 
                             <input
                                 type="hidden"
                                 name="restaurant_id"
-                                value="GSPROUT"
+                                value="{{.RestaurantID}}"
                             />
 
                             <p class="align-centre">

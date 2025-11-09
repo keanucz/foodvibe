@@ -15,8 +15,7 @@
         <div class="container">
             <div class="nav">
                 <div>
-                    <a href="home.html">🏠 Home</a>
-                    <a href="profile.html">👤 **Profile**</a>
+                    <a href="/home">Home</a>
                 </div>
 
                 <div class="mode-switch">
@@ -29,59 +28,38 @@
                 </div>
 
                 <div>
-                    <span style="font-family: var(--header-font)"
-                        >Welcome, Alex!</span
-                    >
-                    <a href="index.html">🚪 Logout</a>
+                    <a href="/profile">Welcome, {{.Username}}</a>
                 </div>
             </div>
 
-            <h1>User Profile: Alex's Taste Settings</h1>
+            <h1>My Taste Profile</h1>
 
-            <table class="profile-table">
-                <tr>
-                    <th colspan="2" style="text-align: center">
-                        USER ACCOUNT INFO
-                    </th>
-                </tr>
-                <tr>
-                    <th>Name</th>
-                    <td>Alex T.</td>
-                </tr>
-                <tr>
-                    <th>Email</th>
-                    <td>alex@example.com</td>
-                </tr>
-                <tr>
-                    <th
-                        colspan="2"
-                        style="
-                            text-align: center;
-                            background-color: var(--accent-color);
-                            color: var(--bg-color);
-                            border-color: var(--border-color);
-                        "
-                    >
-                        CUISINE COMPASS PREFERENCES
-                    </th>
-                </tr>
-                <tr>
-                    <th>Dietary Needs</th>
-                    <td>Vegan, Nut Allergy</td>
-                </tr>
-                <tr>
-                    <th>Taste Profile</th>
-                    <td>Asian Focus, Spicy Enthusiast</td>
-                </tr>
-                <tr>
-                    <th>Current Mode</th>
-                    <td id="current-mode-display">
-                        😇 Angel Mode (Health First)
-                    </td>
-                </tr>
-            </table>
+            <form class="profile-form" id="profile-form">
+                <table class="profile-table">
+                    <tr>
+                        <th>Dietary Needs</th>
+                        <td>
+                            <input
+                                type="text"
+                                name="dietary-needs"
+                                placeholder="Enter dietary needs"
+                            />
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Taste Profile</th>
+                        <td>
+                            <input
+                                type="text"
+                                name="taste-profile"
+                                placeholder="Enter taste profile"
+                            />
+                        </td>
+                    </tr>
+                </table>
 
-            <a href="#" class="edit-button">EDIT PROFILE SETTINGS</a>
+                <button type="submit" class="edit-button">Save Changes</button>
+            </form>
         </div>
     </body>
 </html>
