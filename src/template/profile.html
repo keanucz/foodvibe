@@ -3,7 +3,9 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>foodvibe: food finder</title>
+        <title>foodvibe: My Taste Profile</title>
+
+        <!-- Fonts & Styles -->
         <link
             href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;700&display=swap"
             rel="stylesheet"
@@ -17,8 +19,10 @@
         />
         <script src="../static/scripts.js" defer></script>
     </head>
+
     <body id="body">
         <div class="container">
+            <!-- === NAVIGATION BAR === -->
             <div class="nav">
                 <div>
                     <a href="/home">Home</a>
@@ -38,33 +42,36 @@
                 </div>
             </div>
 
+            <!-- === PAGE HEADER === -->
             <h1>My Taste Profile</h1>
 
-            <form class="profile-form" id="profile-form">
-                <table class="profile-table">
-                    <tr>
-                        <th>Dietary Needs</th>
-                        <td>
-                            <input
-                                type="text"
-                                name="dietary-needs"
-                                placeholder="Enter dietary needs"
-                            />
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Taste Profile</th>
-                        <td>
-                            <input
-                                type="text"
-                                name="taste-profile"
-                                placeholder="Enter taste profile"
-                            />
-                        </td>
-                    </tr>
-                </table>
+            <!-- === PROFILE FORM === -->
+            <form class="form-box" id="profile-form">
+                <h2>Update Your Preferences</h2>
 
-                <button type="submit" class="edit-button">Save Changes</button>
+                <div class="form-group">
+                    <label for="dietary-needs">Dietary Needs</label>
+                    <input
+                        type="text"
+                        id="dietary-needs"
+                        name="dietary-needs"
+                        placeholder="e.g. Vegetarian, Gluten-Free"
+                    />
+                </div>
+
+                <div class="form-group">
+                    <label for="taste-profile">Taste Profile</label>
+                    <input
+                        type="text"
+                        id="taste-profile"
+                        name="taste-profile"
+                        placeholder="e.g. Spicy, Savory, Sweet Tooth"
+                    />
+                </div>
+
+                <button type="submit" class="submit-button">
+                    Save Changes
+                </button>
             </form>
         </div>
     </body>

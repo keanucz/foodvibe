@@ -1,34 +1,52 @@
 document.addEventListener("DOMContentLoaded", () => {
   console.info("foodvibe: frontend scripts initialised");
-  // --- MODE TOGGLE LOGIC ---
+  // --- MODE TOGGLE LOGIC (with localStorage persistence) ---
   const modeToggle = document.getElementById("mode-toggle");
   const demonCSS = document.getElementById("demon-override");
   const h1 = document.querySelector("h1");
 
+  // Helper: apply mode (true = demon, false = angel)
+  function applyMode(isDemon) {
+    if (!demonCSS) return;
+
+    demonCSS.disabled = !isDemon;
+    modeToggle.checked = isDemon;
+
+    // Change header text if present
+    if (h1) {
+      if (isDemon && h1.textContent.includes("Cuisine Compass")) {
+        h1.textContent = h1.textContent.replace(
+          "Cuisine Compass",
+          "The Demon's Feast",
+        );
+      } else if (!isDemon && h1.textContent.includes("The Demon's Feast")) {
+        h1.textContent = h1.textContent.replace(
+          "The Demon's Feast",
+          "Cuisine Compass",
+        );
+      }
+    }
+  }
+
   if (modeToggle && demonCSS) {
+    // 1️⃣ Load saved mode on page load
+    const savedMode = localStorage.getItem("themeMode"); // "demon" or "angel"
+    if (savedMode === "demon") {
+      applyMode(true);
+    } else {
+      applyMode(false);
+    }
+
+    // 2️⃣ Listen for toggle changes and save them
     modeToggle.addEventListener("change", function () {
       const isDemon = this.checked;
+      applyMode(isDemon);
 
-      // Enable or disable the demon-mode CSS file
-      demonCSS.disabled = !isDemon;
-
-      // Update header text on home/index
-      if (h1) {
-        if (isDemon && h1.textContent.includes("Cuisine Compass")) {
-          h1.textContent = h1.textContent.replace(
-            "Cuisine Compass",
-            "The Demon's Feast",
-          );
-        } else if (!isDemon && h1.textContent.includes("The Demon's Feast")) {
-          h1.textContent = h1.textContent.replace(
-            "The Demon's Feast",
-            "Cuisine Compass",
-          );
-        }
-      }
+      // Save user preference
+      localStorage.setItem("themeMode", isDemon ? "demon" : "angel");
     });
   }
-  // --- END OF MODE TOGGLE LOGIC ---
+  // --- END MODE TOGGLE LOGIC ---
 
   // --- RISK SLIDER LOGIC (Page-specific, kept here for completeness) ---
   const riskSlider = document.getElementById("risk-slider");
@@ -209,7 +227,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const radiusField = searchForm.querySelector("#radius");
     const searchButton = searchForm.querySelector(".search-button");
     const locationField = searchForm.querySelector("#location");
-    const currentLocationButton = document.getElementById("use-current-location");
+    const currentLocationButton = document.getElementById(
+      "use-current-location",
+    );
     const locationDatalist = document.getElementById("location-suggestions");
     const suggestionCache = new Map();
     let autocompleteTimer;
@@ -218,7 +238,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const disableSearch = () => {
       if (searchButton) {
         if (!searchButton.dataset.originalText) {
-          searchButton.dataset.originalText = searchButton.textContent || "SEARCH";
+          searchButton.dataset.originalText =
+            searchButton.textContent || "SEARCH";
         }
         searchButton.disabled = true;
         searchButton.textContent = "Searching...";
@@ -228,7 +249,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const enableSearch = () => {
       if (searchButton) {
         searchButton.disabled = false;
-        searchButton.textContent = searchButton.dataset.originalText || "SEARCH";
+        searchButton.textContent =
+          searchButton.dataset.originalText || "SEARCH";
       }
     };
 
@@ -297,7 +319,10 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         if (!response.ok) {
-          console.warn("foodvibe: autocomplete response not ok", response.status);
+          console.warn(
+            "foodvibe: autocomplete response not ok",
+            response.status,
+          );
           return [];
         }
 
@@ -308,7 +333,9 @@ document.addEventListener("DOMContentLoaded", () => {
             lat: parseFloat(entry.lat),
             lng: parseFloat(entry.lon),
           }))
-          .filter((entry) => Number.isFinite(entry.lat) && Number.isFinite(entry.lng));
+          .filter(
+            (entry) => Number.isFinite(entry.lat) && Number.isFinite(entry.lng),
+          );
       } catch (error) {
         console.warn("foodvibe: autocomplete fetch failed", error);
         return [];
@@ -383,7 +410,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const handleError = (error) => {
           console.warn("foodvibe: current location access failed", error);
-          setFeedback(error.message || "Unable to access your current location.", true);
+          setFeedback(
+            error.message || "Unable to access your current location.",
+            true,
+          );
           currentLocationButton.disabled = false;
         };
 
@@ -415,7 +445,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const cuisine = searchForm.cuisine?.value || "";
       const risk = searchForm.risk?.value || "1";
-      const radiusFromInput = radiusField?.value ? parseInt(radiusField.value, 10) : NaN;
+      const radiusFromInput = radiusField?.value
+        ? parseInt(radiusField.value, 10)
+        : NaN;
 
       console.info("foodvibe: search submitted", {
         cuisine,
@@ -609,7 +641,10 @@ async function resolveCoordinates(query) {
 
   if ("geolocation" in navigator) {
     try {
-      const position = await getCurrentPosition({ timeout: 5000, enableHighAccuracy: true });
+      const position = await getCurrentPosition({
+        timeout: 5000,
+        enableHighAccuracy: true,
+      });
       console.info("foodvibe: using browser geolocation fallback");
       return {
         lat: position.coords.latitude,
