@@ -1,0 +1,379 @@
+/* --- GENERAL STYLES & FONT SETUP --- */
+:root {
+    --bg-color: #f7fff7;
+    --text-color: #0d3d3b;
+    --accent-color: #63d471;
+    --secondary-accent: #a9e8f4;
+    --border-color: #0d3d3b;
+    --header-font: "VT323", monospace;
+    --body-font: "Inter", sans-serif;
+}
+
+/* --- BODY --- */
+body {
+    font-family: var(--body-font);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    margin: 0;
+    padding: 20px;
+    transition: all 0.5s ease-in-out;
+    min-height: 100vh;
+    background-image: repeating-linear-gradient(
+        45deg,
+        var(--bg-color) 0,
+        var(--bg-color) 10px,
+        var(--secondary-accent) 10px,
+        var(--secondary-accent) 11px
+    );
+    background-size: 20px 20px;
+}
+
+/* --- CONTAINER & HEADER --- */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    border: 5px solid var(--border-color);
+    box-shadow: 10px 10px 0 var(--border-color);
+    padding: 20px;
+    background-color: var(--bg-color);
+}
+
+h1 {
+    font-family: var(--header-font);
+    font-size: 3.5rem;
+    text-align: center;
+    border-bottom: 3px dashed var(--border-color);
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+    color: var(--accent-color);
+    text-shadow: 2px 2px var(--border-color);
+}
+
+/* --- NAVIGATION --- */
+.nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 30px;
+    padding: 5px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.nav a {
+    font-family: var(--header-font);
+    color: var(--text-color);
+    text-decoration: none;
+    padding: 5px 10px;
+    border: 2px solid transparent;
+    transition: all 0.2s;
+}
+
+.nav a:hover {
+    border-color: var(--accent-color);
+    background-color: rgba(var(--accent-color), 0.1);
+}
+
+/* --- MODE TOGGLE --- */
+.mode-switch {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.mode-switch label {
+    font-family: var(--header-font);
+    font-size: 1.5rem;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+}
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--secondary-accent);
+    transition: 0.4s;
+    border-radius: 34px;
+    border: 2px solid var(--border-color);
+}
+
+.slider:before {
+    position: absolute;
+    content: "😇";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: var(--bg-color);
+    transition: 0.4s;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    border: 2px solid var(--border-color);
+}
+
+input:checked + .slider {
+    background-color: var(--accent-color);
+}
+
+input:checked + .slider:before {
+    transform: translateX(26px);
+    content: "😈";
+}
+
+/* --- SEARCH / INPUT BAR --- */
+.search-form {
+    background-color: var(--secondary-accent);
+    border: 3px solid var(--border-color);
+    padding: 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.search-form input[type="text"],
+.search-form select,
+.search-form input[type="range"] {
+    width: 100%;
+    padding: 8px;
+    border: 2px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    box-sizing: border-box;
+    font-family: var(--body-font);
+}
+
+.search-button {
+    background-color: var(--accent-color);
+    color: var(--text-color);
+    padding: 10px 20px;
+    border: 3px solid var(--border-color);
+    font-family: var(--header-font);
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition:
+        background-color 0.2s,
+        box-shadow 0.2s;
+    margin-top: 15px;
+    box-shadow: 4px 4px 0 var(--border-color);
+}
+
+.search-button:hover {
+    background-color: var(--text-color);
+    color: var(--accent-color);
+}
+
+/* --- RESULTS / CARDS --- */
+.results-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.card {
+    border: 2px solid var(--border-color);
+    padding: 15px;
+    background-color: var(--bg-color);
+    box-shadow: 6px 6px 0 var(--secondary-accent);
+    transition: transform 0.2s;
+    overflow: hidden;
+}
+
+.card:hover {
+    transform: translate(-3px, -3px);
+    box-shadow: 9px 9px 0 var(--secondary-accent);
+}
+
+.card h3 {
+    font-family: var(--header-font);
+    font-size: 2rem;
+    margin-top: 0;
+    border-bottom: 1px dashed var(--border-color);
+    padding-bottom: 5px;
+}
+
+.card-image {
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
+    border: 1px solid var(--border-color);
+    margin-bottom: 10px;
+}
+
+.local-badge {
+    display: inline-block;
+    background-color: var(--accent-color);
+    color: var(--bg-color);
+    font-family: var(--header-font);
+    padding: 3px 8px;
+    border: 1px solid var(--border-color);
+    margin-bottom: 10px;
+}
+
+/* --- FORM STYLES --- */
+.form-box {
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 30px;
+    border: 4px solid var(--border-color);
+    background-color: var(--secondary-accent);
+    box-shadow: 8px 8px 0 var(--border-color);
+}
+.form-box h2 {
+    font-family: var(--header-font);
+    font-size: 2.5rem;
+    text-align: center;
+    margin-bottom: 20px;
+}
+.form-group {
+    margin-bottom: 15px;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    font-family: var(--header-font);
+    font-size: 1.2rem;
+}
+.form-box input[type="text"],
+.form-box input[type="password"],
+.form-box input[type="email"],
+.form-box select {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid var(--border-color);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    box-sizing: border-box;
+    font-family: var(--body-font);
+}
+.submit-button {
+    background-color: var(--accent-color);
+    color: var(--text-color);
+    padding: 10px 20px;
+    border: 3px solid var(--border-color);
+    font-family: var(--header-font);
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    width: 100%;
+    box-shadow: 4px 4px 0 var(--border-color);
+    margin-top: 10px;
+}
+.submit-button:hover {
+    background-color: var(--text-color);
+    color: var(--accent-color);
+}
+.form-footer {
+    text-align: center;
+    margin-top: 20px;
+    border-top: 1px dashed var(--border-color);
+    padding-top: 15px;
+}
+
+/* --- STAR RATING --- */
+.rate input {
+    display: none;
+}
+.rate {
+    margin: 10px auto;
+    width: fit-content;
+    color: var(--accent-color);
+    font-size: 2.5rem;
+    letter-spacing: -0.5rem;
+    line-height: 1;
+    direction: rtl;
+    text-shadow: 1px 1px var(--border-color);
+}
+
+.rate:not(:checked) > label:before {
+    content: "☆";
+}
+.rate > input:checked + label:before,
+.rate > input:checked + label ~ label:before,
+.rate:not(:checked) > label:hover:before,
+.rate:not(:checked) > label:hover ~ label:before {
+    content: "★";
+}
+
+.rating-form button[type="submit"] {
+    background-color: var(--accent-color);
+    color: var(--text-color);
+    padding: 8px 15px;
+    border: 3px solid var(--border-color);
+    font-family: var(--header-font);
+    font-size: 1.2rem;
+    cursor: pointer;
+    box-shadow: 2px 2px 0 var(--border-color);
+    display: block;
+    margin: 10px auto;
+}
+.rating-form button[type="submit"]:hover {
+    background-color: var(--text-color);
+    color: var(--accent-color);
+}
+
+.star.active,
+.star:hover,
+.star-rating:hover .star {
+    color: gold;
+}
+.star-rating .star:hover ~ .star {
+    color: #ccc;
+}
+.star.selected {
+    color: gold !important;
+}
+
+.rating-feedback {
+    font-family: var(--header-font);
+    font-size: 1.2rem;
+    color: var(--accent-color);
+    margin-top: 8px;
+}
+
+/* --- VISITED BUTTON --- */
+.visited-button {
+    background-color: #f6943c;
+    color: var(--text-color);
+    padding: 8px 15px;
+    border: 3px solid var(--border-color);
+    font-family: var(--header-font);
+    font-size: 1.2rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    width: 100%;
+    margin-top: 10px;
+    box-shadow: 2px 2px 0 var(--border-color);
+}
+
+.visited-button:hover:not(:disabled) {
+    background-color: var(--text-color);
+    color: #f6943c;
+}
+
+.visited-button:disabled {
+    cursor: not-allowed;
+    background-color: #cccccc;
+    color: #666666;
+    box-shadow: none;
+}
+
+.hidden {
+    display: none !important;
+}

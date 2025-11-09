@@ -34,15 +34,27 @@ var googleOauthConf = &oauth2.Config{
 }
 
 func createTables(db *sql.DB) error {
-	tables := [2]string{`CREATE TABLE IF NOT EXISTS sessions (
+	tables := [3]string{`CREATE TABLE IF NOT EXISTS sessions (
 		sid TEXT PRIMARY KEY,
 		uid TEXT,
 		FOREIGN KEY(uid) REFERENCES users(id)
 	);`,
 		`CREATE TABLE IF NOT EXISTS users (
 		id TEXT PRIMARY KEY,
-		picture TEXT
-	);`}
+		dietary_reqs TEXT,
+		tastes TEXT
+	);`,
+		`CREATE TABLE IF NOT EXISTS places (
+  		place_id TEXT PRIMARY KEY,
+    	name TEXT,
+     	address TEXT,
+      	cuisine TEXT,
+       	rating_count INTEGER,
+       	lat REAL,
+       	lng REAL,
+        healthy BOOLEAN,
+       	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`}
 
 	for _, v := range tables {
 		_, err := db.Exec(v)
@@ -140,21 +152,82 @@ func main() {
 		http.Redirect(w, r, "/home", http.StatusSeeOther)
 	})
 
+	mux.HandleFunc("/addplace", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Parse the form data
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Error parsing form data: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Get the form values
+		name := r.FormValue("name")
+		address := r.FormValue("address")
+		latitude := r.FormValue("lat")
+		longitude := r.FormValue("lng")
+		cuisine := r.FormValue("cuisine_type")
+		healthy := r.FormValue("healthy")
+		// Validate the form values
+		if name == "" || address == "" || cuisine == "" || latitude == "" || longitude == "" || healthy == "" {
+			http.Error(w, "Missing required fields", http.StatusBadRequest)
+			return
+		}
+		// Insert the place into the database
+		_, err := db.Exec(`INSERT INTO places (name, address, cuisine, lat, lng, healthy) VALUES (?, ?, ?, ?, ?, ?)`, name, address, cuisine, latitude, longitude, healthy)
+		if err != nil {
+			http.Error(w, "Error inserting place into database: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	})
+
+	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
+		risk := r.URL.Query().Get("risk")
+		cuisine := r.URL.Query().Get("cuisine")
+		if risk == "" {
+			http.Error(w, "Missing risk parameter", http.StatusBadRequest)
+			return
+		}
+		if cuisine == "" {
+			http.Error(w, "Missing cuisine parameter", http.StatusBadRequest)
+			return
+		}
+
+		var uid string
+		cookie, err := r.Cookie("session_id")
+		if err != nil {
+			http.Error(w, "No session cookie (did you login?)", http.StatusBadRequest)
+			return
+		}
+		err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid)
+		if err != nil {
+			http.Error(w, "Error querying database", http.StatusBadRequest)
+			return
+		}
+
+		rows, err := db.Query(`SELECT name, address, cuisine, lat, lng FROM places WHERE
+			(3959 * ACOS(COS(RADIANS(:lat)) * COS(RADIANS(lat)) * COS(RADIANS(lng) - RADIANS(:lng)) + SIN(RADIANS(:lat)) * SIN(RADIANS(lat)))) <= :radius_miles`)
+	})
+
 	mux.HandleFunc("/home", func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("session_id")
-		if err == http.ErrNoCookie {
+		if err == http.ErrNoCookie { // check if cookie is missing
 			http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 			return
 		} else if err != nil {
 			http.Error(w, "Error finding cookie: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-
+		// then check if it actually has a valid uid attached
 		var uid string
 		err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid)
 		if err != nil {
 			http.Error(w, "Error querying database", http.StatusBadRequest)
 			return
+		}
+		if uid != "" {
+			http.Redirect(w, r, "/home", http.StatusPermanentRedirect)
 		}
 
 		templ, err := template.ParseFiles("template/home.html")
@@ -171,16 +244,31 @@ func main() {
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		templ, err := template.ParseFiles("template/index.html")
-		if err != nil {
-			http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
+		cookie, err := r.Cookie("session_id")
+		if err == http.ErrNoCookie { // check if cookie is missing
+			templ, err := template.ParseFiles("template/index.html")
+			if err != nil {
+				http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			err = templ.Execute(w, nil)
+			if err != nil {
+				println("Error loading template: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else if err != nil {
+			http.Error(w, "Error finding cookie: "+err.Error(), http.StatusInternalServerError)
 			return
-		}
-
-		err = templ.Execute(w, nil)
-		if err != nil {
-			println("Error loading template: "+err.Error(), http.StatusInternalServerError)
-			return
+		} else {
+			// then check if it actually has a valid uid attached
+			var uid string
+			err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid)
+			if err != nil {
+				http.Error(w, "Error querying database", http.StatusBadRequest)
+				return
+			} else if uid != "" {
+				http.Redirect(w, r, "/home", http.StatusPermanentRedirect)
+			}
 		}
 	})
 

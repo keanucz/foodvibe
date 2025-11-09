@@ -1,0 +1,30 @@
+:root {
+    --bg-color: #1a0101;
+    --text-color: #ffe6a7;
+    --accent-color: #ff3333;
+    --secondary-accent: #8b0000;
+    --border-color: #ff3333;
+}
+
+/* Slider face color */
+.demon-mode .slider:before {
+    background-color: var(--text-color);
+}
+
+/* Demon Mode star color overrides */
+.demon-mode .star.active,
+.demon-mode .star.selected,
+.demon-mode .star:hover,
+.demon-mode .star-rating:hover .star {
+    color: #ff8c00;
+}
+
+/* Demon Mode button overrides */
+.demon-mode .visited-button {
+    background-color: #ffaa00;
+}
+
+.demon-mode .visited-button:hover:not(:disabled) {
+    background-color: var(--text-color);
+    color: #ffaa00;
+}
