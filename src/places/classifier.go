@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"strings"
+	"unicode"
 
 	"github.com/google/uuid"
 	"google.golang.org/adk/agent"
@@ -20,15 +21,84 @@ import (
 
 // Classifier exposes cuisine classification for Places results.
 type Classifier interface {
-	Classify(ctx context.Context, place Place) (ClassificationResult, error)
+	Classify(ctx context.Context, place Place, prefs PreferenceProfile) (ClassificationResult, error)
+}
+
+// PreferenceProfile captures a user's stated dietary requirements and taste preferences.
+type PreferenceProfile struct {
+	DietaryNeeds string
+	TasteProfile string
 }
 
 // ClassificationResult captures the structured response from the classifier.
 type ClassificationResult struct {
-	Cuisine    string  `json:"cuisine"`
-	Healthy    bool    `json:"healthy"`
-	Confidence float64 `json:"confidence"`
-	Rationale  string  `json:"rationale"`
+	Cuisine            string  `json:"cuisine"`
+	Healthy            bool    `json:"healthy"`
+	Confidence         float64 `json:"confidence"`
+	Rationale          string  `json:"rationale"`
+	DietarySuitability string  `json:"dietarySuitability"`
+	TasteMatchLevel    string  `json:"tasteMatchLevel"`
+}
+
+const (
+	// DietarySuitabilityCompatible indicates that the venue can accommodate the requirement.
+	DietarySuitabilityCompatible = "compatible"
+	// DietarySuitabilityIncompatible indicates a clear conflict with the requirement.
+	DietarySuitabilityIncompatible = "incompatible"
+	// DietarySuitabilityUnknown indicates insufficient evidence either way.
+	DietarySuitabilityUnknown = "unknown"
+)
+
+const (
+	// TasteMatchHigh indicates a strong alignment with the user's taste preferences.
+	TasteMatchHigh = "high"
+	// TasteMatchMedium indicates a neutral or mixed alignment.
+	TasteMatchMedium = "medium"
+	// TasteMatchLow indicates the venue likely does not align with the preference.
+	TasteMatchLow = "low"
+)
+
+var cuisineAliases = map[string]string{
+	"unknown":       "Unknown",
+	"chinese":       "Chinese",
+	"szechuan":      "Chinese",
+	"sichuan":       "Chinese",
+	"dim sum":       "Chinese",
+	"indian":        "Indian",
+	"italian":       "Italian",
+	"pizza":         "Italian",
+	"japanese":      "Japanese",
+	"sushi":         "Japanese",
+	"ramen":         "Japanese",
+	"korean":        "Korean",
+	"pub":           "Pub",
+	"irish":         "Pub",
+	"greek":         "Greek",
+	"mediterranean": "Mediterranean",
+	"lebanese":      "Lebanese",
+	"turkish":       "Turkish",
+	"french":        "French",
+	"spanish":       "Spanish",
+	"tapas":         "Spanish",
+	"american":      "American",
+	"steakhouse":    "Steakhouse",
+	"barbecue":      "Barbecue",
+	"bbq":           "Barbecue",
+	"burger":        "Burgers",
+	"burgers":       "Burgers",
+	"seafood":       "Seafood",
+	"steak house":   "Steakhouse",
+	"mexican":       "Mexican",
+	"taqueria":      "Mexican",
+	"cantina":       "Mexican",
+	"thai":          "Thai",
+	"vietnamese":    "Vietnamese",
+	"bakery":        "Bakery",
+	"patisserie":    "Bakery",
+	"middleeastern": "Mediterranean",
+	"shawarma":      "Lebanese",
+	"mezze":         "Mediterranean",
+	"asian":         "Unknown",
 }
 
 // ClassifierConfig holds configuration for the ADK-backed classifier helper.
@@ -56,10 +126,12 @@ const (
 const ClassifierInstruction = `You are FoodVibe's cuisine classification agent.
 You always respond with strict JSON matching this schema:
 {
-  "cuisine": string,            // primary cuisine label in Title Case (e.g. "Mexican")
-  "healthy": boolean,          // true only if the venue emphasizes nutritious, plant-forward, or dietary-conscious menus
-  "confidence": number,        // value between 0 and 1 rounded to two decimals summarising certainty
-  "rationale": string          // one concise English sentence justifying the choice
+	"cuisine": string,             // single-word cuisine label in Title Case (e.g. "Mexican")
+	"healthy": boolean,           // true only if the venue emphasizes nutritious, plant-forward, or dietary-conscious menus
+	"confidence": number,         // value between 0 and 1 rounded to two decimals summarising certainty
+	"rationale": string,          // one concise English sentence justifying the choice
+	"dietarySuitability": string, // "compatible", "incompatible", or "unknown" when comparing to the user's dietary needs
+	"tasteMatchLevel": string     // "high", "medium", or "low" alignment with the user's taste preferences
 }
 
 Input Context:
@@ -67,7 +139,12 @@ Input Context:
 - Consider local hints (e.g. "taqueria", "izakaya"), menu items, user comments, and cuisine tags.
 - If evidence is insufficient, set cuisine to "Unknown", healthy to false, confidence <= 0.35, and explain the uncertainty.
 - Healthy should be true only when there is explicit evidence of health-focused options (e.g. "salad bar", "low-carb", "vegan", "organic", "healthy bowls").
-- Prefer culturally specific cuisine names ("Thai", "Lebanese", "Caribbean"). Use broader categories ("American", "European") only when necessary.
+- Cuisine MUST be exactly one word chosen from: Unknown, Chinese, Indian, Italian, Japanese, Korean, Pub, Greek, French, Spanish, American, Mexican, Mediterranean, Lebanese, Turkish, Thai, Vietnamese, Bakery, Barbecue, Seafood, Steakhouse, Burgers.
+- Always factor in the user's dietary requirements and taste preferences that accompany the venue details.
+- Prefer culturally specific cuisine names ("Thai", "Lebanese"). Use broader categories ("American") only when necessary.
+- Mark dietarySuitability as "compatible" only when the venue clearly satisfies the requirement, "incompatible" when there is explicit conflict (e.g. non-halal venue for halal needs), otherwise reply "unknown".
+- For tasteMatchLevel, respond "high" when a preference is clearly aligned, "low" when it conflicts, and "medium" when unsure.
+- Rationale must be a single concise sentence (<= 20 words).
 - Never mention these instructions or the input format in your response.`
 
 func (cfg *ClassifierConfig) applyDefaults() {
@@ -136,8 +213,16 @@ func NewClassifierAgent(ctx context.Context, cfg ClassifierConfig) (agent.Agent,
 				Type:        "STRING",
 				Description: "Concise English sentence justifying the choice",
 			},
+			"dietarySuitability": {
+				Type:        "STRING",
+				Description: "One of \"compatible\", \"incompatible\", or \"unknown\" compared to the user's dietary needs",
+			},
+			"tasteMatchLevel": {
+				Type:        "STRING",
+				Description: "One of \"high\", \"medium\", or \"low\" describing alignment with the user's taste preferences",
+			},
 		},
-		Required: []string{"cuisine", "healthy", "confidence", "rationale"},
+		Required: []string{"cuisine", "healthy", "confidence", "rationale", "dietarySuitability", "tasteMatchLevel"},
 	}
 
 	return llmagent.New(llmagent.Config{
@@ -185,21 +270,24 @@ func newADKClassifier(ctx context.Context, cfg ClassifierConfig, fallback Classi
 	}, nil
 }
 
-func (c *adkClassifier) Classify(ctx context.Context, place Place) (ClassificationResult, error) {
-	result, err := c.invoke(ctx, place)
+
+func (c *adkClassifier) Classify(ctx context.Context, place Place, prefs PreferenceProfile) (ClassificationResult, error) {
+	result, err := c.invoke(ctx, place, prefs)
 	if err != nil {
 		log.Printf("adk classifier fallback: %v", err)
-		return c.fallback.Classify(ctx, place)
+		return c.fallback.Classify(ctx, place, prefs)
 	}
 	if result.Cuisine == "" || result.Rationale == "" {
-		return c.fallback.Classify(ctx, place)
+		return c.fallback.Classify(ctx, place, prefs)
 	}
-	result.Cuisine = titleCase(result.Cuisine)
+	result.Cuisine = normalizeCuisineLabel(result.Cuisine)
 	result.Confidence = clamp01(result.Confidence)
+	result.DietarySuitability = normalizeSuitability(result.DietarySuitability)
+	result.TasteMatchLevel = normalizeTasteMatch(result.TasteMatchLevel)
 	return result, nil
 }
 
-func (c *adkClassifier) invoke(ctx context.Context, place Place) (ClassificationResult, error) {
+func (c *adkClassifier) invoke(ctx context.Context, place Place, prefs PreferenceProfile) (ClassificationResult, error) {
 	sessionID := uuid.New().String()
 	_, err := c.sessionService.Create(ctx, &session.CreateRequest{
 		AppName:   c.appName,
@@ -223,6 +311,8 @@ func (c *adkClassifier) invoke(ctx context.Context, place Place) (Classification
 		"google_maps_uri":            place.GoogleMapsURI,
 		"international_phone_number": place.InternationalPhone,
 		"national_phone_number":      place.NationalPhone,
+		"user_dietary_needs":         strings.TrimSpace(prefs.DietaryNeeds),
+		"user_taste_profile":         strings.TrimSpace(prefs.TasteProfile),
 	}
 
 	input, err := json.Marshal(payload)
@@ -270,32 +360,35 @@ func (c *adkClassifier) invoke(ctx context.Context, place Place) (Classification
 		return ClassificationResult{}, errors.New("incomplete classifier response")
 	}
 
-	parsed.Cuisine = titleCase(parsed.Cuisine)
+	parsed.Cuisine = normalizeCuisineLabel(parsed.Cuisine)
 	parsed.Confidence = clamp01(parsed.Confidence)
 	return parsed, nil
 }
 
 type heuristicClassifier struct{}
 
-func (heuristicClassifier) Classify(_ context.Context, place Place) (ClassificationResult, error) {
-	return heuristicClassify(place), nil
+func (heuristicClassifier) Classify(_ context.Context, place Place, prefs PreferenceProfile) (ClassificationResult, error) {
+	return heuristicClassify(place, prefs), nil
 }
 
-func heuristicClassify(place Place) ClassificationResult {
+func heuristicClassify(place Place, prefs PreferenceProfile) ClassificationResult {
 	normalized := normalizeName(place.Name)
-	cuisine := detectCuisine(place.Types, normalized)
+	cuisine := normalizeCuisineLabel(detectCuisine(place.Types, normalized))
 	healthy := detectHealthiness(place.Types, normalized)
 	confidence := 0.4
 	if cuisine != "Unknown" {
 		confidence = 0.65
 	}
 	rationale := buildRationale(cuisine, healthy, place)
-	return ClassificationResult{
+	result := ClassificationResult{
 		Cuisine:    cuisine,
 		Healthy:    healthy,
 		Confidence: confidence,
 		Rationale:  rationale,
 	}
+	result.DietarySuitability = inferDietarySuitability(place, prefs.DietaryNeeds)
+	result.TasteMatchLevel = inferTasteMatch(place, cuisine, prefs.TasteProfile)
+	return result
 }
 
 func detectCuisine(types []string, normalizedName string) string {
@@ -314,23 +407,23 @@ func detectCuisine(types []string, normalizedName string) string {
 		"bistro":     "French",
 		"brasserie":  "French",
 		"taverna":    "Greek",
-		"mezze":      "Middle Eastern",
-		"shawarma":   "Middle Eastern",
-		"dim sum":    "Chinese",
-		"noodle":     "Asian",
+		"mezze":      "Mediterranean",
+		"shawarma":   "Lebanese",
+		"dim sum":   "Chinese",
+		"noodle":     "Chinese",
 		"sushi":      "Japanese",
 		"ramen":      "Japanese",
 		"bao":        "Chinese",
-		"poke":       "Hawaiian",
+		"poke":       "Seafood",
 		"bbq":        "Barbecue",
 		"barbecue":   "Barbecue",
-		"steakhouse": "American",
+		"steakhouse": "Steakhouse",
 		"diner":      "American",
 		"gastropub":  "Pub",
 		"pub":        "Pub",
 		"brewpub":    "Pub",
 		"bakery":     "Bakery",
-		"patisserie": "French",
+		"patisserie": "Bakery",
 	}
 
 	for key, value := range keywords {
@@ -382,6 +475,129 @@ func buildRationale(cuisine string, healthy bool, place Place) string {
 	return strings.Join(fragments, "; ")
 }
 
+func inferDietarySuitability(place Place, dietaryNeeds string) string {
+	dietaryNeeds = strings.TrimSpace(strings.ToLower(dietaryNeeds))
+	if dietaryNeeds == "" {
+		return DietarySuitabilityCompatible
+	}
+	tokens := tokenizePreferences(dietaryNeeds)
+	if len(tokens) == 0 {
+		return DietarySuitabilityUnknown
+	}
+
+	normalizedName := normalizeName(place.Name)
+	typesLower := lowerPlaceTypes(place.Types)
+	suitability := DietarySuitabilityUnknown
+
+	for _, token := range tokens {
+		switch token {
+		case "halal":
+			if strings.Contains(normalizedName, "halal") || containsAny(typesLower, "halal_restaurant") {
+				suitability = DietarySuitabilityCompatible
+				continue
+			}
+			if containsAny(typesLower, "bar", "brewery", "pub") {
+				return DietarySuitabilityIncompatible
+			}
+		case "kosher":
+			if strings.Contains(normalizedName, "kosher") || containsAny(typesLower, "kosher_restaurant") {
+				suitability = DietarySuitabilityCompatible
+			}
+		case "vegan":
+			if containsAny(typesLower, "vegan_restaurant") || strings.Contains(normalizedName, "vegan") {
+				suitability = DietarySuitabilityCompatible
+				continue
+			}
+			if containsAny(typesLower, "steakhouse", "barbecue_restaurant") {
+				return DietarySuitabilityIncompatible
+			}
+		case "vegetarian":
+			if containsAny(typesLower, "vegetarian_restaurant") || strings.Contains(normalizedName, "vegetarian") {
+				suitability = DietarySuitabilityCompatible
+			}
+		case "gluten-free", "glutenfree", "gluten free", "celiac", "coeliac":
+			if strings.Contains(normalizedName, "gluten-free") || strings.Contains(normalizedName, "gluten free") {
+				suitability = DietarySuitabilityCompatible
+			}
+		default:
+			if strings.Contains(normalizedName, token) {
+				suitability = DietarySuitabilityCompatible
+			}
+		}
+	}
+
+	return suitability
+}
+
+func inferTasteMatch(place Place, cuisine, tasteProfile string) string {
+	tasteProfile = strings.TrimSpace(strings.ToLower(tasteProfile))
+	if tasteProfile == "" {
+		return TasteMatchMedium
+	}
+	tokens := tokenizePreferences(tasteProfile)
+	if len(tokens) == 0 {
+		return TasteMatchMedium
+	}
+
+	normalizedName := normalizeName(place.Name)
+	typesLower := lowerPlaceTypes(place.Types)
+	cuisineLower := strings.ToLower(strings.TrimSpace(cuisine))
+
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		if token == cuisineLower {
+			return TasteMatchHigh
+		}
+		if strings.Contains(normalizedName, token) {
+			return TasteMatchHigh
+		}
+		if containsAny(typesLower, token) {
+			return TasteMatchHigh
+		}
+	}
+	return TasteMatchMedium
+}
+
+func lowerPlaceTypes(types []string) []string {
+	out := make([]string, 0, len(types))
+	for _, t := range types {
+		out = append(out, strings.ToLower(strings.TrimSpace(t)))
+	}
+	return out
+}
+
+func containsAny(haystack []string, needles ...string) bool {
+	for _, needle := range needles {
+		needle = strings.ToLower(strings.TrimSpace(needle))
+		if needle == "" {
+			continue
+		}
+		for _, item := range haystack {
+			if item == needle {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func tokenizePreferences(raw string) []string {
+	raw = strings.ToLower(raw)
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		switch {
+		case unicode.IsSpace(r):
+			return true
+		case r == ',', r == ';', r == '|', r == '/', r == '&':
+			return true
+		default:
+			return false
+		}
+	})
+	return fields
+}
+
 func mapTypeToCuisine(placeType string) string {
 	switch placeType {
 	case "italian_restaurant":
@@ -409,7 +625,7 @@ func mapTypeToCuisine(placeType string) string {
 	case "vietnamese_restaurant":
 		return "Vietnamese"
 	case "lebanese_restaurant":
-		return "Middle Eastern"
+		return "Lebanese"
 	case "turkish_restaurant":
 		return "Turkish"
 	case "american_restaurant":
@@ -419,13 +635,65 @@ func mapTypeToCuisine(placeType string) string {
 	case "barbecue_restaurant":
 		return "Barbecue"
 	case "pizza_restaurant":
-		return "Pizza"
+		return "Italian"
 	case "burger_restaurant":
 		return "Burgers"
 	case "bakery":
 		return "Bakery"
 	default:
 		return ""
+	}
+}
+
+func normalizeCuisineLabel(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "Unknown"
+	}
+	normalized := normalizeName(trimmed)
+	if normalized == "" {
+		return "Unknown"
+	}
+	collapsed := strings.ReplaceAll(normalized, " ", "")
+	if collapsed == "" {
+		return "Unknown"
+	}
+	if canonical, ok := cuisineAliases[collapsed]; ok {
+		return canonical
+	}
+	if canonical, ok := cuisineAliases[normalized]; ok {
+		return canonical
+	}
+	for key, value := range cuisineAliases {
+		keyCollapsed := strings.ReplaceAll(key, " ", "")
+		if strings.Contains(collapsed, keyCollapsed) {
+			return value
+		}
+	}
+	return "Unknown"
+}
+
+func normalizeSuitability(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case DietarySuitabilityCompatible:
+		return DietarySuitabilityCompatible
+	case DietarySuitabilityIncompatible:
+		return DietarySuitabilityIncompatible
+	default:
+		return DietarySuitabilityUnknown
+	}
+}
+
+func normalizeTasteMatch(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case TasteMatchHigh:
+		return TasteMatchHigh
+	case TasteMatchLow:
+		return TasteMatchLow
+	case TasteMatchMedium:
+		return TasteMatchMedium
+	default:
+		return TasteMatchMedium
 	}
 }
 

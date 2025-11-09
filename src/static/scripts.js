@@ -564,23 +564,22 @@ function renderResults(resultsGrid, results) {
     card.className = "card";
 
     const cuisine = result?.classification?.cuisine || "Unknown";
-    const confidence = formatConfidence(result?.classification?.confidence);
+    const safeness = formatSafeness(result?.classification?.confidence);
     const healthy = result?.classification?.healthy === true;
-    const rationale = result?.classification?.rationale || "";
     const address = result?.formattedAddress || "";
 
-    const rating = formatRating(result?.rating, result?.userRatingsTotal);
-    const mapLink = result?.googleMapsUri || result?.googleMapsURI || "";
+  const rating = formatRating(result?.rating, result?.userRatingsTotal);
+  const mapLink = result?.googleMapsUri || result?.googleMapsURI || "";
+  const mapLabel = "View on Google Maps";
 
     card.innerHTML = `
       <h3>${escapeHtml(result?.name || "Unnamed spot")}</h3>
       ${address ? `<p>Address: ${escapeHtml(address)}</p>` : ""}
       <p>Cuisine: ${escapeHtml(cuisine)}</p>
       <p>Healthy focus: ${healthy ? "Yes" : "No"}</p>
-      <p>Confidence: ${confidence}</p>
+      <p>Safeness: ${safeness}</p>
       ${rating ? `<p>${rating}</p>` : ""}
-      ${rationale ? `<p class="rationale">${escapeHtml(rationale)}</p>` : ""}
-      ${mapLink ? `<p><a href="${encodeURI(mapLink)}" target="_blank" rel="noopener">Open in Google Maps</a></p>` : ""}
+  ${mapLink ? `<p class="map-link"><a class="map-button" href="${encodeURI(mapLink)}" target="_blank" rel="noopener"><span class="map-icon" aria-hidden="true"></span>${mapLabel}</a></p>` : ""}
     `;
 
     fragment.appendChild(card);
@@ -608,12 +607,35 @@ function escapeHtml(value) {
   });
 }
 
-function formatConfidence(value) {
+function formatSafeness(value) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return "n/a";
   }
   const percentage = Math.round(Math.min(Math.max(value, 0), 1) * 100);
   return `${percentage}%`;
+}
+
+function formatRationale(text) {
+  if (typeof text !== "string" || text.trim() === "") {
+    return "";
+  }
+  const sentences = text
+    .trim()
+    .match(/[^.!?]+[.!?]?/g)
+    ?.map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  if (!sentences || sentences.length === 0) {
+    return "";
+  }
+
+  const disallowed = ["primary type", "types list", "type list", "category", "categorised", "categorized", "classified", "classification", "types:" ];
+  const chosen = sentences.find((sentence) => {
+    const lower = sentence.toLowerCase();
+    return !disallowed.some((needle) => lower.includes(needle));
+  });
+
+  return chosen || "";
 }
 
 function formatRating(rating, total) {

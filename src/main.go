@@ -12,9 +12,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	_ "github.com/glebarez/go-sqlite"
 	"github.com/google/uuid"
@@ -29,6 +33,9 @@ type googleOauthResp struct {
 	Id            string `json:"id"`
 	Email         string `json:"email"`
 	VerifiedEmail bool   `json:"verified_email"`
+	Name          string `json:"name"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
 	Picture       string `json:"picture"`
 }
 type Restaurant struct {
@@ -49,7 +56,10 @@ var googleOauthConf = &oauth2.Config{
 	// fill client* with values set by env vars
 	ClientID:     "",
 	ClientSecret: "",
-	Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
+	Scopes: []string{
+		"https://www.googleapis.com/auth/userinfo.email",
+		"https://www.googleapis.com/auth/userinfo.profile",
+	},
 	Endpoint:     google.Endpoint,
 }
 
@@ -105,6 +115,9 @@ func createTables(db *sql.DB) error {
 			return err
 		}
 	}
+	if err := ensureUsersColumns(db); err != nil {
+		return err
+	}
 	log.Println("db: schema ensured")
 	return nil
 }
@@ -140,13 +153,22 @@ func main() {
 		log.Printf("db: open failed: %v", err)
 		return
 	}
+	db.SetMaxOpenConns(1)
 	log.Printf("db: opened sqlite database at %s", dbPath)
-	defer db.Close()
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
+		log.Printf("db: failed to enable WAL mode: %v", err)
+	} else {
+		log.Println("db: WAL mode enabled")
+	}
+	if _, err := db.Exec(`PRAGMA synchronous=NORMAL`); err != nil {
+		log.Printf("db: failed to set synchronous pragma: %v", err)
+	}
 
 	// create the tables
 	err = createTables(db)
 	if err != nil {
 		log.Println("db: schema setup failed, shutting down")
+		flushAndCloseDB(db)
 		return
 	}
 	log.Println("db: schema ready")
@@ -223,13 +245,24 @@ func main() {
 			Value:    sessionID,
 			SameSite: http.SameSiteLaxMode,
 		}
+		preferredName := strings.TrimSpace(json_resp.GivenName)
+		if preferredName == "" {
+			preferredName = json_resp.Name
+		}
+		displayName := deriveDisplayName(preferredName, json_resp.Email)
 		_, err = db.Exec(`INSERT INTO sessions (sid, uid) VALUES (?,?)`, sessionID, json_resp.Id)
 		if err != nil {
 			log.Printf("auth: insert session failed: %v", err)
 			http.Error(w, "Error updating database: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_, err = db.Exec(`INSERT OR IGNORE INTO users (id) VALUES (?)`, json_resp.Id)
+		_, err = db.Exec(`INSERT INTO users (id, email, display_name) VALUES (?, ?, ?)
+			ON CONFLICT(id) DO UPDATE SET
+				email = excluded.email,
+				display_name = CASE
+					WHEN excluded.display_name != '' THEN excluded.display_name
+					ELSE users.display_name
+				END`, json_resp.Id, json_resp.Email, displayName)
 		if err != nil {
 			log.Printf("auth: insert user failed: %v", err)
 			http.Error(w, "Error updating database: "+err.Error(), http.StatusInternalServerError)
@@ -365,16 +398,33 @@ func main() {
 			}
 		}
 
+		record, err := fetchUserRecord(db, uid)
+		if err != nil {
+			log.Printf("search: failed to load user %s preferences: %v", uid, err)
+			http.Error(w, "Failed to load user preferences", http.StatusInternalServerError)
+			return
+		}
+		preferences := places.PreferenceProfile{}
+		if record != nil {
+			preferences.DietaryNeeds = strings.TrimSpace(valueOrEmpty(record.DietaryNeeds))
+			preferences.TasteProfile = strings.TrimSpace(valueOrEmpty(record.TasteProfile))
+		}
+
 		results, err := placeSvc.Search(r.Context(), places.SearchOptions{
 			Latitude:     lat,
 			Longitude:    lng,
 			RadiusMeters: radiusMeters,
 			MaxResults:   10,
+			CuisineCode:  cuisine,
+			Preferences:  preferences,
 		})
 		if err != nil {
 			log.Printf("place search failed: %v", err)
 			http.Error(w, "Failed to search nearby venues", http.StatusBadGateway)
 			return
+		}
+		if err := cacheSearchResults(r.Context(), db, results); err != nil {
+			log.Printf("search: cache write failed: %v", err)
 		}
 		log.Printf("search: returning %d results for user %s at %.5f,%.5f radius %d", len(results), uid, lat, lng, radiusMeters)
 
@@ -410,7 +460,8 @@ func main() {
 			http.Redirect(w, r, "/", http.StatusPermanentRedirect)
 		}
 
-		if err := renderTemplate(w, "home.html", nil); err != nil {
+		pageData := PageData{Username: loadDisplayName(db, uid)}
+		if err := renderTemplate(w, "home.html", pageData); err != nil {
 			log.Printf("ui: template render error: %v", err)
 			http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -441,7 +492,19 @@ func main() {
 			http.Redirect(w, r, "/", http.StatusPermanentRedirect)
 		}
 
-		if err := renderTemplate(w, "profile.html", nil); err != nil {
+		record, err := fetchUserRecord(db, uid)
+		if err != nil {
+			log.Printf("ui: failed fetching user %s record: %v", uid, err)
+			http.Error(w, "Error loading profile", http.StatusInternalServerError)
+			return
+		}
+		username := resolveDisplayName(db, uid, record)
+		pageData := PageData{
+			Username:     username,
+			DietaryNeeds: strings.TrimSpace(valueOrEmpty(record.DietaryNeeds)),
+			TasteProfile: strings.TrimSpace(valueOrEmpty(record.TasteProfile)),
+		}
+		if err := renderTemplate(w, "profile.html", pageData); err != nil {
 			log.Printf("ui: profile template render error: %v", err)
 			http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -478,10 +541,43 @@ func main() {
 		}
 	})
 
-	log.Println("server: listening on :8080")
-	if err := http.ListenAndServe(":8080", mux); err != nil {
-		log.Fatalf("server: shutdown due to error: %v", err)
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	server := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
 	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		log.Println("server: listening on :8080")
+		errCh <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			log.Printf("server: listener error: %v", err)
+		}
+	case <-shutdownCtx.Done():
+		log.Println("server: shutdown signal received")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("server: graceful shutdown failed: %v", err)
+		}
+		if err := <-errCh; err != nil && err != http.ErrServerClosed {
+			log.Printf("server: listener error after shutdown: %v", err)
+		}
+	}
+
+	if err := flushAndCloseDB(db); err != nil {
+		log.Printf("db: flush on shutdown error: %v", err)
+	} else {
+		log.Println("db: clean shutdown complete")
+	}
+	log.Println("server: shutdown complete")
 }
 
 func renderTemplate(w http.ResponseWriter, name string, data any) error {
@@ -490,4 +586,200 @@ func renderTemplate(w http.ResponseWriter, name string, data any) error {
 		return fmt.Errorf("template %q not found", name)
 	}
 	return tmpl.Execute(w, data)
+}
+
+type PageData struct {
+	Username string
+	Cards    []HomeCard
+	DietaryNeeds string
+	TasteProfile string
+}
+
+type HomeCard struct {
+	Name         string
+	Cuisine      string
+	Address      string
+	RestaurantID string
+}
+
+func ensureUsersColumns(db *sql.DB) error {
+	alterStatements := []string{
+		"ALTER TABLE users ADD COLUMN email TEXT",
+		"ALTER TABLE users ADD COLUMN display_name TEXT",
+	}
+	for _, stmt := range alterStatements {
+		if _, err := db.Exec(stmt); err != nil {
+			errText := strings.ToLower(err.Error())
+			if !strings.Contains(errText, "duplicate column") {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func deriveDisplayName(name, email string) string {
+	name = strings.TrimSpace(name)
+	if name != "" {
+		return name
+	}
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return ""
+	}
+	if at := strings.Index(email, "@"); at >= 0 {
+		email = email[:at]
+	}
+	replacer := strings.NewReplacer(".", " ", "_", " ", "-", " ")
+	email = replacer.Replace(email)
+	words := strings.Fields(email)
+	if len(words) == 0 {
+		return ""
+	}
+	for i, word := range words {
+		if len(word) == 0 {
+			continue
+		}
+		lower := strings.ToLower(word)
+		words[i] = strings.ToUpper(lower[:1]) + lower[1:]
+	}
+	return strings.Join(words, " ")
+}
+
+func loadDisplayName(db *sql.DB, userID string) string {
+	record, err := fetchUserRecord(db, userID)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("db: failed to load user %s profile: %v", userID, err)
+		}
+		return ""
+	}
+	return resolveDisplayName(db, userID, record)
+}
+
+func valueOrEmpty(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
+}
+
+type userRecord struct {
+	DisplayName   sql.NullString
+	Email         sql.NullString
+	DietaryNeeds  sql.NullString
+	TasteProfile  sql.NullString
+}
+
+func fetchUserRecord(db *sql.DB, userID string) (*userRecord, error) {
+	if strings.TrimSpace(userID) == "" {
+		return nil, sql.ErrNoRows
+	}
+	record := &userRecord{}
+	err := db.QueryRow(
+		`SELECT display_name, email, dietary_reqs, tastes FROM users WHERE id = ?`,
+		userID,
+	).Scan(&record.DisplayName, &record.Email, &record.DietaryNeeds, &record.TasteProfile)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return &userRecord{}, nil
+		}
+		return nil, err
+	}
+	return record, nil
+}
+
+func resolveDisplayName(db *sql.DB, userID string, record *userRecord) string {
+	if record == nil {
+		return ""
+	}
+	name := strings.TrimSpace(valueOrEmpty(record.DisplayName))
+	if name != "" {
+		return name
+	}
+
+	emailVal := strings.TrimSpace(valueOrEmpty(record.Email))
+	if emailVal != "" {
+		if fallback := deriveDisplayName("", emailVal); fallback != "" {
+			if _, err := db.Exec(`UPDATE users SET display_name = ? WHERE id = ?`, fallback, userID); err != nil {
+				log.Printf("db: failed to backfill display name for %s: %v", userID, err)
+			} else {
+				record.DisplayName = sql.NullString{String: fallback, Valid: true}
+			}
+			return fallback
+		}
+	}
+
+	return userID
+}
+
+func cacheSearchResults(ctx context.Context, db *sql.DB, results []places.Result) error {
+	if db == nil || len(results) == 0 {
+		return nil
+	}
+	cacheCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	tx, err := db.BeginTx(cacheCtx, nil)
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(cacheCtx, `INSERT INTO places (place_id, name, address, cuisine, rating_count, lat, lng, healthy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(place_id) DO UPDATE SET
+			name = excluded.name,
+			address = excluded.address,
+			cuisine = excluded.cuisine,
+			rating_count = excluded.rating_count,
+			lat = excluded.lat,
+			lng = excluded.lng,
+			healthy = excluded.healthy`)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	defer stmt.Close()
+
+	for _, result := range results {
+		if result.Place.ID == "" {
+			continue
+		}
+		_, err := stmt.ExecContext(cacheCtx,
+			result.Place.ID,
+			result.Place.Name,
+			result.Place.FormattedAddress,
+			result.Classification.Cuisine,
+			result.Place.UserRatingsTotal,
+			result.Place.Latitude,
+			result.Place.Longitude,
+			boolToInt(result.Classification.Healthy),
+		)
+		if err != nil {
+			stmt.Close()
+			tx.Rollback()
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func flushAndCloseDB(db *sql.DB) error {
+	if db == nil {
+		return nil
+	}
+	if _, err := db.Exec(`PRAGMA wal_checkpoint(FULL)`); err != nil {
+		log.Printf("db: wal checkpoint failed: %v", err)
+	}
+	return db.Close()
 }
