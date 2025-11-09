@@ -250,6 +250,38 @@ input:checked + .slider:before {
     font-family: var(--header-font);
     font-size: 1.2rem;
 }
+.location-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.location-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.location-input-row input[type="text"] {
+    flex: 1;
+}
+
+.secondary-button {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    padding: 8px 12px;
+    border: 2px dashed var(--border-color);
+    font-family: var(--header-font);
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s, color 0.2s;
+    box-shadow: 2px 2px 0 var(--border-color);
+}
+
+.secondary-button:hover {
+    background-color: var(--accent-color);
+    color: var(--text-color);
+}
 .form-box input[type="text"],
 .form-box input[type="password"],
 .form-box input[type="email"],
@@ -376,4 +408,8 @@ input:checked + .slider:before {
 
 .hidden {
     display: none !important;
+}
+
+.error {
+    color: #b00020;
 }

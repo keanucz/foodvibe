@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -54,12 +55,14 @@ func NewClient(rapidAPIKey, rapidAPIHost, googleAPIKey string) *Client {
 	if rapidAPIHost == "" {
 		rapidAPIHost = defaultRapidAPIHost
 	}
-	return &Client{
+	client := &Client{
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
 		rapidAPIKey:  rapidAPIKey,
 		rapidAPIHost: rapidAPIHost,
 		googleAPIKey: googleAPIKey,
 	}
+	log.Printf("places: client configured (rapid_host=%s rapid_key=%t google_key=%t)", rapidAPIHost, rapidAPIKey != "", googleAPIKey != "")
+	return client
 }
 
 // NearbyFoodPlaces returns nearby independent food spots filtered for big chains.
@@ -75,20 +78,27 @@ func (c *Client) NearbyFoodPlaces(ctx context.Context, opts SearchOptions) ([]Pl
 		return nil, errors.New("latitude and longitude must be provided")
 	}
 
+	log.Printf("places: nearby search lat=%.5f lng=%.5f radius=%d max=%d", opts.Latitude, opts.Longitude, opts.RadiusMeters, opts.MaxResults)
+
 	var rapidErr error
 	if c.rapidAPIKey != "" {
 		if places, err := c.searchRapidAPI(ctx, opts); err == nil && len(places) > 0 {
+			log.Printf("places: rapidapi returned %d venues", len(places))
 			return places, nil
 		} else if err != nil {
+			log.Printf("places: rapidapi search error: %v", err)
 			rapidErr = err
 		}
 	}
 
 	if c.googleAPIKey != "" {
 		if places, err := c.searchGooglePlaces(ctx, opts); err == nil {
+			log.Printf("places: google places returned %d venues", len(places))
 			return places, nil
 		} else if rapidErr == nil {
 			return nil, err
+		} else {
+			log.Printf("places: google places error: %v", err)
 		}
 	}
 
@@ -208,16 +218,19 @@ func (c *Client) searchGooglePlaces(ctx context.Context, opts SearchOptions) ([]
 func (c *Client) sendPlacesRequest(req *http.Request) ([]Place, error) {
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		log.Printf("places: request error for %s: %v", req.URL, err)
 		return nil, fmt.Errorf("places request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("places: response read error for %s: %v", req.URL, err)
 		return nil, fmt.Errorf("read places response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("places: non-200 response %d for %s", resp.StatusCode, req.URL)
 		return nil, fmt.Errorf("places api error (%d): %s", resp.StatusCode, string(body))
 	}
 
@@ -277,4 +290,50 @@ func (c *Client) sendPlacesRequest(req *http.Request) ([]Place, error) {
 
 func fieldMask() string {
 	return "places.id,places.displayName,places.primaryType,places.types,places.formattedAddress,places.location.latitude,places.location.longitude,places.rating,places.userRatingCount,places.priceLevel,places.nationalPhoneNumber,places.internationalPhoneNumber,places.googleMapsUri,places.websiteUri"
+}
+
+// Service orchestrates remote lookups and downstream classification of venues.
+type Service struct {
+	client     *Client
+	classifier Classifier
+}
+
+// Result decorates a Place with classifier output.
+type Result struct {
+	Place
+	Classification ClassificationResult `json:"classification"`
+}
+
+// NewService wires the places client with a classifier, defaulting to heuristic classification when nil.
+func NewService(client *Client, classifier Classifier) *Service {
+	if classifier == nil {
+		classifier = &heuristicClassifier{}
+	}
+	return &Service{
+		client:     client,
+		classifier: classifier,
+	}
+}
+
+// Search fetches nearby places and enriches them with classification metadata.
+func (s *Service) Search(ctx context.Context, opts SearchOptions) ([]Result, error) {
+	log.Printf("service: search lat=%.5f lng=%.5f radius=%d max=%d", opts.Latitude, opts.Longitude, opts.RadiusMeters, opts.MaxResults)
+	places, err := s.client.NearbyFoodPlaces(ctx, opts)
+	if err != nil {
+		log.Printf("service: nearby search error: %v", err)
+		return nil, err
+	}
+
+	results := make([]Result, 0, len(places))
+	for _, place := range places {
+		log.Printf("service: classifying place %s (%s)", place.Name, place.ID)
+		class, err := s.classifier.Classify(ctx, place)
+		if err != nil {
+			log.Printf("service: classifier error for %s: %v", place.ID, err)
+			class = heuristicClassify(place)
+		}
+		results = append(results, Result{Place: place, Classification: class})
+	}
+	log.Printf("service: returning %d results", len(results))
+	return results, nil
 }

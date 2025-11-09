@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Cuisine Compass - Local Flavor Navigator</title>
+    <title>foodvibe: food finder</title>
         <link
             href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;700&display=swap"
             rel="stylesheet"
@@ -59,14 +59,38 @@
                     </select>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group location-group">
                     <label for="location">Your Location</label>
+                    <div class="location-input-row">
+                        <input
+                            type="text"
+                            id="location"
+                            name="location"
+                            placeholder="e.g., Nancy Rothwell Building, Manchester, UK"
+                            list="location-suggestions"
+                            autocomplete="off"
+                            required
+                        />
+                        <button
+                            type="button"
+                            id="use-current-location"
+                            class="secondary-button"
+                        >
+                            Use current location
+                        </button>
+                    </div>
+                    <datalist id="location-suggestions"></datalist>
+                </div>
+
+                <div class="form-group">
+                    <label for="radius">Radius (meters, optional)</label>
                     <input
-                        type="text"
-                        id="location"
-                        name="location"
-                        placeholder="e.g., Nancy Rothwell Building, Manchester, UK"
-                        required
+                        type="number"
+                        id="radius"
+                        name="radius"
+                        min="250"
+                        step="50"
+                        placeholder="e.g., 2000"
                     />
                 </div>
 
@@ -87,6 +111,8 @@
 
                 <button type="submit" class="search-button">SEARCH</button>
             </form>
+
+            <p id="search-feedback" class="hidden"></p>
 
             <h2>Our top picks of the week :)</h2>
             <div class="results-grid">
