@@ -270,7 +270,6 @@ func newADKClassifier(ctx context.Context, cfg ClassifierConfig, fallback Classi
 	}, nil
 }
 
-
 func (c *adkClassifier) Classify(ctx context.Context, place Place, prefs PreferenceProfile) (ClassificationResult, error) {
 	result, err := c.invoke(ctx, place, prefs)
 	if err != nil {
@@ -409,7 +408,7 @@ func detectCuisine(types []string, normalizedName string) string {
 		"taverna":    "Greek",
 		"mezze":      "Mediterranean",
 		"shawarma":   "Lebanese",
-		"dim sum":   "Chinese",
+		"dim sum":    "Chinese",
 		"noodle":     "Chinese",
 		"sushi":      "Japanese",
 		"ramen":      "Japanese",

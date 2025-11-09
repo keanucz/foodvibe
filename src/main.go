@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -43,6 +44,7 @@ type Restaurant struct {
 	Name        string  `json:"name"`
 	Address     string  `json:"address"`
 	Cuisine     string  `json:"cuisine"`
+	Rating      float64 `json:"rating"`
 	RatingCount int     `json:"rating_count"`
 	Lat         float64 `json:"lat"` // Stored as REAL in SQL
 	Lng         float64 `json:"lng"` // Stored as REAL in SQL
@@ -60,7 +62,7 @@ var googleOauthConf = &oauth2.Config{
 		"https://www.googleapis.com/auth/userinfo.email",
 		"https://www.googleapis.com/auth/userinfo.profile",
 	},
-	Endpoint:     google.Endpoint,
+	Endpoint: google.Endpoint,
 }
 
 //go:embed template/*.html
@@ -99,12 +101,29 @@ func createTables(db *sql.DB) error {
 			name TEXT,
 			address TEXT,
 			cuisine TEXT,
+			rating REAL,
 			rating_count INTEGER,
 			lat REAL,
 			lng REAL,
 			healthy BOOLEAN,
 			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`,
+		},
+		{
+			name: "ratings",
+			query: `CREATE TABLE IF NOT EXISTS ratings (
+			place_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY(place_id, user_id),
+			FOREIGN KEY(user_id) REFERENCES users(id)
+		);`,
+		},
+		{
+			name: "ratings_place_idx",
+			query: `CREATE INDEX IF NOT EXISTS idx_ratings_place ON ratings(place_id);`,
 		},
 	}
 
@@ -116,6 +135,9 @@ func createTables(db *sql.DB) error {
 		}
 	}
 	if err := ensureUsersColumns(db); err != nil {
+		return err
+	}
+	if err := ensurePlacesColumns(db); err != nil {
 		return err
 	}
 	log.Println("db: schema ensured")
@@ -296,8 +318,8 @@ func main() {
 		log.Printf("places: received %d restaurants to insert", len(restaurants))
 
 		const insertSQL = `
-			INSERT INTO places(place_id, name, address, cuisine, rating_count, lat, lng, healthy)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+			INSERT INTO places(place_id, name, address, cuisine, rating, rating_count, lat, lng, healthy)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 		tx, err := db.Begin()
 		if err != nil {
@@ -318,7 +340,7 @@ func main() {
 		inserted := 0
 		for _, res := range restaurants {
 			_, err := stmt.Exec(res.PlaceID, res.Name, res.Address, res.Cuisine,
-				res.RatingCount, res.Lat, res.Lng, res.Healthy)
+				res.Rating, res.RatingCount, res.Lat, res.Lng, res.Healthy)
 			if err != nil {
 				log.Printf("Insert error for %s: %v", res.Name, err)
 				http.Error(w, fmt.Sprintf("Error inserting %s", res.Name), http.StatusInternalServerError)
@@ -423,6 +445,9 @@ func main() {
 			http.Error(w, "Failed to search nearby venues", http.StatusBadGateway)
 			return
 		}
+		if err := populateRatingSummaries(r.Context(), db, uid, results); err != nil {
+			log.Printf("search: rating enrichment failed: %v", err)
+		}
 		if err := cacheSearchResults(r.Context(), db, results); err != nil {
 			log.Printf("search: cache write failed: %v", err)
 		}
@@ -458,6 +483,11 @@ func main() {
 		}
 		if uid == "" {
 			http.Redirect(w, r, "/", http.StatusPermanentRedirect)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
 
 		pageData := PageData{Username: loadDisplayName(db, uid)}
@@ -490,6 +520,27 @@ func main() {
 		}
 		if uid == "" {
 			http.Redirect(w, r, "/", http.StatusPermanentRedirect)
+			return
+		}
+		if r.Method == http.MethodPost {
+			if err := r.ParseForm(); err != nil {
+				log.Printf("ui: profile form parse failed: %v", err)
+				http.Error(w, "Invalid form submission", http.StatusBadRequest)
+				return
+			}
+			dietary := strings.TrimSpace(r.FormValue("dietary-needs"))
+			taste := strings.TrimSpace(r.FormValue("taste-profile"))
+			if err := saveUserPreferences(r.Context(), db, uid, dietary, taste); err != nil {
+				log.Printf("ui: failed saving preferences for user %s: %v", uid, err)
+				http.Error(w, "Error saving preferences", http.StatusInternalServerError)
+				return
+			}
+			http.Redirect(w, r, "/profile?saved=1", http.StatusSeeOther)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
 
 		record, err := fetchUserRecord(db, uid)
@@ -504,12 +555,78 @@ func main() {
 			DietaryNeeds: strings.TrimSpace(valueOrEmpty(record.DietaryNeeds)),
 			TasteProfile: strings.TrimSpace(valueOrEmpty(record.TasteProfile)),
 		}
+		if r.URL.Query().Get("saved") == "1" {
+			pageData.FlashMessage = "Preferences saved successfully."
+		}
 		if err := renderTemplate(w, "profile.html", pageData); err != nil {
 			log.Printf("ui: profile template render error: %v", err)
 			http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		log.Printf("ui: profile rendered for user %s", uid)
+	})
+
+	mux.HandleFunc("/rate", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		cookie, err := r.Cookie("session_id")
+		if err == http.ErrNoCookie {
+			http.Error(w, "Unauthorised", http.StatusUnauthorized)
+			return
+		} else if err != nil {
+			http.Error(w, "Error reading cookie", http.StatusInternalServerError)
+			return
+		}
+
+		var uid string
+		if err := db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid); err != nil {
+			http.Error(w, "Session invalid", http.StatusUnauthorized)
+			return
+		}
+		uid = strings.TrimSpace(uid)
+		if uid == "" {
+			http.Error(w, "Session invalid", http.StatusUnauthorized)
+			return
+		}
+
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid form payload", http.StatusBadRequest)
+			return
+		}
+
+		placeID := strings.TrimSpace(r.FormValue("restaurant_id"))
+		ratingStr := strings.TrimSpace(r.FormValue("rating"))
+		if placeID == "" || ratingStr == "" {
+			http.Error(w, "Missing rating data", http.StatusBadRequest)
+			return
+		}
+		ratingVal, err := strconv.Atoi(ratingStr)
+		if err != nil {
+			http.Error(w, "Invalid rating value", http.StatusBadRequest)
+			return
+		}
+		if err := saveUserRating(r.Context(), db, uid, placeID, ratingVal); err != nil {
+			log.Printf("ratings: failed to persist rating for user %s place %s: %v", uid, placeID, err)
+			http.Error(w, "Failed to save rating", http.StatusInternalServerError)
+			return
+		}
+
+		summary, err := ratingSummaryForPlace(r.Context(), db, placeID, uid)
+		if err != nil {
+			log.Printf("ratings: failed to compute summary for %s: %v", placeID, err)
+			http.Error(w, "Failed to compute rating summary", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":  "ok",
+			"summary": summary,
+		})
 	})
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -589,10 +706,11 @@ func renderTemplate(w http.ResponseWriter, name string, data any) error {
 }
 
 type PageData struct {
-	Username string
-	Cards    []HomeCard
+	Username     string
+	Cards        []HomeCard
 	DietaryNeeds string
 	TasteProfile string
+	FlashMessage string
 }
 
 type HomeCard struct {
@@ -606,6 +724,21 @@ func ensureUsersColumns(db *sql.DB) error {
 	alterStatements := []string{
 		"ALTER TABLE users ADD COLUMN email TEXT",
 		"ALTER TABLE users ADD COLUMN display_name TEXT",
+	}
+	for _, stmt := range alterStatements {
+		if _, err := db.Exec(stmt); err != nil {
+			errText := strings.ToLower(err.Error())
+			if !strings.Contains(errText, "duplicate column") {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func ensurePlacesColumns(db *sql.DB) error {
+	alterStatements := []string{
+		"ALTER TABLE places ADD COLUMN rating REAL",
 	}
 	for _, stmt := range alterStatements {
 		if _, err := db.Exec(stmt); err != nil {
@@ -665,10 +798,10 @@ func valueOrEmpty(ns sql.NullString) string {
 }
 
 type userRecord struct {
-	DisplayName   sql.NullString
-	Email         sql.NullString
-	DietaryNeeds  sql.NullString
-	TasteProfile  sql.NullString
+	DisplayName  sql.NullString
+	Email        sql.NullString
+	DietaryNeeds sql.NullString
+	TasteProfile sql.NullString
 }
 
 func fetchUserRecord(db *sql.DB, userID string) (*userRecord, error) {
@@ -713,6 +846,247 @@ func resolveDisplayName(db *sql.DB, userID string, record *userRecord) string {
 	return userID
 }
 
+func withTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
+func saveUserPreferences(ctx context.Context, db *sql.DB, userID, dietary, taste string) error {
+	if db == nil {
+		return errors.New("database handle is nil")
+	}
+	trimmedID := strings.TrimSpace(userID)
+	if trimmedID == "" {
+		return errors.New("user id is required")
+	}
+
+	execCtx, cancel := withTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	_, err := db.ExecContext(execCtx,
+		`INSERT INTO users (id, dietary_reqs, tastes)
+			VALUES (?, NULLIF(?, ''), NULLIF(?, ''))
+			ON CONFLICT(id) DO UPDATE SET
+				dietary_reqs = excluded.dietary_reqs,
+				tastes = excluded.tastes`,
+		trimmedID,
+		strings.TrimSpace(dietary),
+		strings.TrimSpace(taste),
+	)
+	return err
+}
+
+func saveUserRating(ctx context.Context, db *sql.DB, userID, placeID string, rating int) error {
+	if db == nil {
+		return errors.New("database handle is nil")
+	}
+	trimmedUser := strings.TrimSpace(userID)
+	trimmedPlace := strings.TrimSpace(placeID)
+	if trimmedUser == "" || trimmedPlace == "" {
+		return errors.New("user id and place id are required")
+	}
+	if rating < 1 || rating > 5 {
+		return fmt.Errorf("rating %d out of range", rating)
+	}
+
+	execCtx, cancel := withTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	_, err := db.ExecContext(execCtx,
+		`INSERT INTO ratings (place_id, user_id, rating, created_at, updated_at)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+			ON CONFLICT(place_id, user_id) DO UPDATE SET
+				rating = excluded.rating,
+				updated_at = CURRENT_TIMESTAMP`,
+		trimmedPlace,
+		trimmedUser,
+		rating,
+	)
+	return err
+}
+
+func ratingSummaryForPlace(ctx context.Context, db *sql.DB, placeID, userID string) (places.RatingSummary, error) {
+	summary := places.RatingSummary{}
+	if db == nil {
+		return summary, errors.New("database handle is nil")
+	}
+	trimmedPlace := strings.TrimSpace(placeID)
+	if trimmedPlace == "" {
+		return summary, errors.New("place id is required")
+	}
+
+	queryCtx, cancel := withTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	var googleRating sql.NullFloat64
+	var googleCount sql.NullInt64
+	if err := db.QueryRowContext(queryCtx, `SELECT rating, rating_count FROM places WHERE place_id = ?`, trimmedPlace).
+		Scan(&googleRating, &googleCount); err != nil {
+		if err != sql.ErrNoRows {
+			return summary, err
+		}
+	} else {
+		if googleRating.Valid {
+			summary.GoogleRating = googleRating.Float64
+		}
+		if googleCount.Valid {
+			summary.GoogleRatingCount = int(googleCount.Int64)
+		}
+	}
+
+	var localAvg sql.NullFloat64
+	var localCount int64
+	if err := db.QueryRowContext(queryCtx, `SELECT AVG(rating), COUNT(*) FROM ratings WHERE place_id = ?`, trimmedPlace).
+		Scan(&localAvg, &localCount); err != nil {
+		if err != sql.ErrNoRows {
+			return summary, err
+		}
+	}
+	if localAvg.Valid {
+		summary.LocalAverage = localAvg.Float64
+	}
+	summary.LocalCount = int(localCount)
+
+	if trimmedUser := strings.TrimSpace(userID); trimmedUser != "" {
+		var userRating sql.NullInt64
+		if err := db.QueryRowContext(queryCtx, `SELECT rating FROM ratings WHERE place_id = ? AND user_id = ?`, trimmedPlace, trimmedUser).
+			Scan(&userRating); err != nil {
+			if err != sql.ErrNoRows {
+				return summary, err
+			}
+		} else if userRating.Valid {
+			summary.UserRating = int(userRating.Int64)
+		}
+	}
+
+	combinedCount := summary.GoogleRatingCount + summary.LocalCount
+	summary.CombinedCount = combinedCount
+	if combinedCount > 0 {
+		total := summary.GoogleRating*float64(summary.GoogleRatingCount) + summary.LocalAverage*float64(summary.LocalCount)
+		summary.CombinedRating = total / float64(combinedCount)
+	}
+
+	return summary, nil
+}
+
+func populateRatingSummaries(ctx context.Context, db *sql.DB, userID string, results []places.Result) error {
+	if db == nil {
+		return errors.New("database handle is nil")
+	}
+	if len(results) == 0 {
+		return nil
+	}
+
+	idSet := make(map[string]struct{}, len(results))
+	ids := make([]string, 0, len(results))
+	for _, res := range results {
+		id := strings.TrimSpace(res.Place.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := idSet[id]; exists {
+			continue
+		}
+		idSet[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+
+	queryCtx, cancel := withTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	aggregates := make(map[string]struct {
+		avg   float64
+		count int
+	})
+
+	aggregateQuery := fmt.Sprintf(`SELECT place_id, AVG(rating) AS avg_rating, COUNT(*) AS cnt FROM ratings WHERE place_id IN (%s) GROUP BY place_id`, placeholders)
+	rows, err := db.QueryContext(queryCtx, aggregateQuery, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var placeID string
+		var avg sql.NullFloat64
+		var cnt int
+		if err := rows.Scan(&placeID, &avg, &cnt); err != nil {
+			return err
+		}
+		if avg.Valid {
+			aggregates[placeID] = struct {
+				avg   float64
+				count int
+			}{avg: avg.Float64, count: cnt}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	userRatings := make(map[string]int)
+	trimmedUser := strings.TrimSpace(userID)
+	if trimmedUser != "" {
+		userQuery := fmt.Sprintf(`SELECT place_id, rating FROM ratings WHERE user_id = ? AND place_id IN (%s)`, placeholders)
+		userArgs := append([]any{trimmedUser}, args...)
+		userRows, err := db.QueryContext(queryCtx, userQuery, userArgs...)
+		if err != nil {
+			return err
+		}
+		defer userRows.Close()
+		for userRows.Next() {
+			var placeID string
+			var rating int
+			if err := userRows.Scan(&placeID, &rating); err != nil {
+				return err
+			}
+			userRatings[placeID] = rating
+		}
+		if err := userRows.Err(); err != nil {
+			return err
+		}
+	}
+
+	for i := range results {
+		placeID := strings.TrimSpace(results[i].Place.ID)
+		if placeID == "" {
+			continue
+		}
+		summary := places.RatingSummary{
+			GoogleRating:      results[i].Place.Rating,
+			GoogleRatingCount: results[i].Place.UserRatingsTotal,
+		}
+		if agg, ok := aggregates[placeID]; ok {
+			summary.LocalAverage = agg.avg
+			summary.LocalCount = agg.count
+		}
+		if rating, ok := userRatings[placeID]; ok {
+			summary.UserRating = rating
+		}
+		combinedCount := summary.GoogleRatingCount + summary.LocalCount
+		summary.CombinedCount = combinedCount
+		if combinedCount > 0 {
+			total := summary.GoogleRating*float64(summary.GoogleRatingCount) + summary.LocalAverage*float64(summary.LocalCount)
+			summary.CombinedRating = total / float64(combinedCount)
+		}
+		results[i].RatingSummary = summary
+	}
+
+	return nil
+}
+
 func cacheSearchResults(ctx context.Context, db *sql.DB, results []places.Result) error {
 	if db == nil || len(results) == 0 {
 		return nil
@@ -724,12 +1098,13 @@ func cacheSearchResults(ctx context.Context, db *sql.DB, results []places.Result
 	if err != nil {
 		return err
 	}
-	stmt, err := tx.PrepareContext(cacheCtx, `INSERT INTO places (place_id, name, address, cuisine, rating_count, lat, lng, healthy)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	stmt, err := tx.PrepareContext(cacheCtx, `INSERT INTO places (place_id, name, address, cuisine, rating, rating_count, lat, lng, healthy)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(place_id) DO UPDATE SET
 			name = excluded.name,
 			address = excluded.address,
 			cuisine = excluded.cuisine,
+			rating = excluded.rating,
 			rating_count = excluded.rating_count,
 			lat = excluded.lat,
 			lng = excluded.lng,
@@ -749,6 +1124,7 @@ func cacheSearchResults(ctx context.Context, db *sql.DB, results []places.Result
 			result.Place.Name,
 			result.Place.FormattedAddress,
 			result.Classification.Cuisine,
+			result.Place.Rating,
 			result.Place.UserRatingsTotal,
 			result.Place.Latitude,
 			result.Place.Longitude,

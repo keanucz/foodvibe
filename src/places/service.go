@@ -445,10 +445,22 @@ type Service struct {
 	classifier Classifier
 }
 
+// RatingSummary captures Google-provided ratings, locally submitted ratings, and the combined view.
+type RatingSummary struct {
+	GoogleRating      float64 `json:"googleRating"`
+	GoogleRatingCount int     `json:"googleRatingCount"`
+	LocalAverage      float64 `json:"localAverage"`
+	LocalCount        int     `json:"localCount"`
+	CombinedRating    float64 `json:"combinedRating"`
+	CombinedCount     int     `json:"combinedCount"`
+	UserRating        int     `json:"userRating,omitempty"`
+}
+
 // Result decorates a Place with classifier output.
 type Result struct {
 	Place
 	Classification ClassificationResult `json:"classification"`
+	RatingSummary  RatingSummary        `json:"ratingSummary"`
 }
 
 // NewService wires the places client with a classifier, defaulting to heuristic classification when nil.

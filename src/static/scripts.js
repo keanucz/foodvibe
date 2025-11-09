@@ -102,11 +102,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       // 2. Show the visited button (unless already rated)
-      if (
-        visitedButton &&
-        visitedButton.classList.contains("hidden") &&
-        !visitedButton.textContent.includes("Rated")
-      ) {
+      if (visitedButton) {
         visitedButton.classList.remove("hidden");
       }
 
@@ -161,6 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const card = this.closest(".card");
         const feedbackElement = card?.querySelector(".rating-feedback");
         const visitedButton = card?.querySelector(".visited-button");
+        const ratingContainer = card?.querySelector(".rating-container");
         const formData = new FormData(this);
 
         const ratingValue = formData.get("rating");
@@ -170,8 +167,9 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
 
+        const placeId = formData.get("restaurant_id");
         console.info("foodvibe: rating submitted", {
-          restaurantId: formData.get("restaurant_id"),
+          restaurantId: placeId,
           rating: ratingValue,
         });
 
@@ -189,15 +187,31 @@ document.addEventListener("DOMContentLoaded", () => {
             body: new URLSearchParams(formData),
           });
 
+          let responseBody = null;
+          if (response.ok) {
+            try {
+              responseBody = await response.json();
+            } catch (parseError) {
+              console.warn("foodvibe: rating response parse failed", parseError);
+            }
+          }
+
           if (response.ok) {
             if (feedbackElement) {
               feedbackElement.textContent = `Success! Rating submitted.`;
             }
             if (visitedButton) {
-              visitedButton.textContent = `Rated (${ratingValue} stars)`;
+              visitedButton.classList.remove("hidden");
+              visitedButton.textContent = `Update rating (${ratingValue}★)`;
+            }
+            if (ratingContainer) {
+              ratingContainer.classList.add("hidden");
+            }
+            if (responseBody?.summary) {
+              updateRatingDisplay(card, responseBody.summary);
             }
             console.info("foodvibe: rating submission succeeded", {
-              restaurantId: formData.get("restaurant_id"),
+              restaurantId: placeId,
               rating: ratingValue,
             });
           } else {
@@ -205,13 +219,13 @@ document.addEventListener("DOMContentLoaded", () => {
               feedbackElement.textContent = `Error: Could not save rating. Try again.`;
             }
             console.error("Server responded with an error:", response.status);
-            this.style.pointerEvents = "auto";
           }
         } catch (error) {
           if (feedbackElement) {
             feedbackElement.textContent = `Network Error: Could not connect.`;
           }
           console.error("Fetch failed:", error);
+        } finally {
           this.style.pointerEvents = "auto";
         }
       });
@@ -559,18 +573,50 @@ function renderResults(resultsGrid, results) {
   console.info("foodvibe: rendering results", { count: results.length });
   const fragment = document.createDocumentFragment();
 
-  results.forEach((result) => {
+  results.forEach((result, index) => {
     const card = document.createElement("div");
     card.className = "card";
+
+    const placeId = result?.id || "";
+    if (placeId) {
+      card.dataset.placeId = placeId;
+    }
 
     const cuisine = result?.classification?.cuisine || "Unknown";
     const safeness = formatSafeness(result?.classification?.confidence);
     const healthy = result?.classification?.healthy === true;
     const address = result?.formattedAddress || "";
+    const ratingMarkup = formatRating(
+      result?.ratingSummary,
+      result?.rating,
+      result?.userRatingsTotal,
+    );
+    const mapLink = result?.googleMapsUri || result?.googleMapsURI || "";
+    const mapLabel = "View on Google Maps";
+    const radioBase = `star-${index}-${sanitizeId(placeId) || "place"}`;
 
-  const rating = formatRating(result?.rating, result?.userRatingsTotal);
-  const mapLink = result?.googleMapsUri || result?.googleMapsURI || "";
-  const mapLabel = "View on Google Maps";
+    const ratingControls = placeId
+      ? `
+      <button type="button" class="visited-button">I VISITED THIS PLACE</button>
+      <div class="rating-container hidden">
+        <p class="rating-prompt">Submit Your Rating:</p>
+        <form class="rating-form" method="POST" action="/rate">
+          <div class="rate">
+            ${buildStarInputs(radioBase)}
+          </div>
+          <input
+            type="hidden"
+            name="restaurant_id"
+            value="${escapeHtml(placeId)}"
+          />
+          <p class="align-centre">
+            <button type="submit">RATE!</button>
+          </p>
+        </form>
+        <p class="rating-feedback hidden" aria-live="polite"></p>
+      </div>
+      `
+      : "";
 
     card.innerHTML = `
       <h3>${escapeHtml(result?.name || "Unnamed spot")}</h3>
@@ -578,8 +624,9 @@ function renderResults(resultsGrid, results) {
       <p>Cuisine: ${escapeHtml(cuisine)}</p>
       <p>Healthy focus: ${healthy ? "Yes" : "No"}</p>
       <p>Safeness: ${safeness}</p>
-      ${rating ? `<p>${rating}</p>` : ""}
-  ${mapLink ? `<p class="map-link"><a class="map-button" href="${encodeURI(mapLink)}" target="_blank" rel="noopener"><span class="map-icon" aria-hidden="true"></span>${mapLabel}</a></p>` : ""}
+      ${ratingMarkup}
+      ${mapLink ? `<p class="map-link"><a class="map-button" href="${encodeURI(mapLink)}" target="_blank" rel="noopener"><span class="map-icon" aria-hidden="true"></span>${mapLabel}</a></p>` : ""}
+      ${ratingControls}
     `;
 
     fragment.appendChild(card);
@@ -638,12 +685,117 @@ function formatRationale(text) {
   return chosen || "";
 }
 
-function formatRating(rating, total) {
-  if (typeof rating !== "number" || Number.isNaN(rating)) {
-    return "";
+function formatRating(summary, fallbackRating, fallbackCount) {
+  const data = summary ?? {};
+  let combinedRating = toNumber(data.combinedRating);
+  let combinedCount = toNumber(data.combinedCount);
+
+  const googleRating = toNumber(data.googleRating);
+  const googleCount = toNumber(data.googleRatingCount);
+  const localAverage = toNumber(data.localAverage);
+  const localCount = toNumber(data.localCount);
+  const userRating = toNumber(data.userRating);
+
+  if (!Number.isFinite(combinedRating) && Number.isFinite(fallbackRating)) {
+    combinedRating = fallbackRating;
   }
-  const reviews = typeof total === "number" && total > 0 ? total : null;
-  return `Rating: ${rating.toFixed(1)}${reviews ? ` (${reviews} reviews)` : ""}`;
+  if (!Number.isFinite(combinedCount) && Number.isFinite(fallbackCount)) {
+    combinedCount = fallbackCount;
+  }
+
+  const hasCombined = Number.isFinite(combinedRating);
+  const clampedCombined = hasCombined ? clamp(combinedRating, 0, 5) : 0;
+
+  const breakdownParts = [];
+  if (Number.isFinite(googleRating) && Number.isFinite(googleCount) && googleCount > 0) {
+    breakdownParts.push(`Google ${googleRating.toFixed(1)} (${googleCount})`);
+  }
+  if (Number.isFinite(localAverage) && Number.isFinite(localCount) && localCount > 0) {
+    breakdownParts.push(`Foodvibe ${localAverage.toFixed(1)} (${localCount})`);
+  }
+
+  const breakdown = breakdownParts.length
+    ? `<span class="rating-breakdown">${breakdownParts.join(" · ")}</span>`
+    : "";
+  const userNote = Number.isFinite(userRating) && userRating > 0
+    ? `<span class="user-rating-note">You rated ${userRating}★</span>`
+    : "";
+
+  if (!hasCombined || !Number.isFinite(combinedCount) || combinedCount <= 0) {
+    return `
+      <div class="rating-display rating-display--empty" data-rating-display>
+        ${renderStarRating(0)}
+        <div class="rating-meta">
+          <span class="rating-score">No ratings yet</span>
+          <span class="rating-count">Be the first to rate this spot.</span>
+          ${userNote}
+        </div>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="rating-display" data-rating-display>
+      ${renderStarRating(clampedCombined)}
+      <div class="rating-meta">
+        <span class="rating-score">${clampedCombined.toFixed(1)}</span>
+        <span class="rating-count">(${combinedCount} total)</span>
+        ${breakdown}
+        ${userNote}
+      </div>
+    </div>
+  `;
+}
+
+function renderStarRating(value) {
+  const safeValue = clamp(Number.isFinite(value) ? value : 0, 0, 5);
+  const label = safeValue > 0
+    ? `${safeValue.toFixed(1)} out of 5 stars`
+    : "No rating yet";
+  return `<div class="star-rating-display" style="--rating: ${safeValue};" aria-label="${label}"></div>`;
+}
+
+function updateRatingDisplay(card, summary) {
+  if (!card) {
+    return;
+  }
+  const node = card.querySelector("[data-rating-display]");
+  if (!node) {
+    return;
+  }
+  node.outerHTML = formatRating(summary);
+}
+
+function sanitizeId(value) {
+  return (value ?? "").toString().replace(/[^a-zA-Z0-9_-]/g, "").slice(-20);
+}
+
+function buildStarInputs(base) {
+  const stars = [
+    { value: 5, title: "5 stars" },
+    { value: 4, title: "4 stars" },
+    { value: 3, title: "3 stars" },
+    { value: 2, title: "2 stars" },
+    { value: 1, title: "1 star" },
+  ];
+  return stars
+    .map(({ value, title }) => {
+      const id = `${base}-${value}`;
+      return `
+        <input type="radio" id="${id}" name="rating" value="${value}" />
+        <label for="${id}" title="${title}"></label>
+      `;
+    })
+    .join("\n");
+}
+
+function toNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : Number.NaN;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function riskToRadius(riskValue) {

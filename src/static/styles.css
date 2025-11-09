@@ -373,7 +373,82 @@ input:checked + .slider:before {
     padding-top: 15px;
 }
 
+.flash-message {
+    max-width: 600px;
+    margin: 0 auto 20px;
+    padding: 12px 16px;
+    border: 3px solid var(--border-color);
+    background-color: #fff8d6;
+    box-shadow: 4px 4px 0 var(--border-color);
+    font-family: var(--header-font);
+    font-size: 1.2rem;
+    text-align: center;
+}
+
 /* --- STAR RATING --- */
+.rating-display {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 10px 0;
+}
+
+.rating-display--empty {
+    color: #4f6462;
+}
+
+.rating-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: var(--body-font);
+    font-size: 0.95rem;
+}
+
+.rating-score {
+    font-family: var(--header-font);
+    font-size: 1.4rem;
+}
+
+.rating-count,
+.rating-breakdown,
+.user-rating-note {
+    font-size: 0.85rem;
+}
+
+.rating-breakdown {
+    color: #3f4d4c;
+}
+
+.user-rating-note {
+    color: var(--accent-color);
+    font-weight: bold;
+}
+
+.star-rating-display {
+    --rating: 0;
+    position: relative;
+    display: inline-block;
+    font-size: 1.4rem;
+    line-height: 1;
+    color: #cbd5ce;
+}
+
+.star-rating-display::before,
+.star-rating-display::after {
+    content: "★★★★★";
+    letter-spacing: 2px;
+}
+
+.star-rating-display::after {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: calc(var(--rating) / 5 * 100%);
+    overflow: hidden;
+    color: var(--accent-color);
+}
+
 .rate input {
     display: none;
 }
