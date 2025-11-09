@@ -212,8 +212,193 @@ document.addEventListener("DOMContentLoaded", () => {
     const currentLocationButton = document.getElementById("use-current-location");
     const locationDatalist = document.getElementById("location-suggestions");
     const suggestionCache = new Map();
-  let autocompleteTimer;
-  let suppressLocationInputHandler = false;
+    let autocompleteTimer;
+    let suppressLocationInputHandler = false;
+
+    const disableSearch = () => {
+      if (searchButton) {
+        if (!searchButton.dataset.originalText) {
+          searchButton.dataset.originalText = searchButton.textContent || "SEARCH";
+        }
+        searchButton.disabled = true;
+        searchButton.textContent = "Searching...";
+      }
+    };
+
+    const enableSearch = () => {
+      if (searchButton) {
+        searchButton.disabled = false;
+        searchButton.textContent = searchButton.dataset.originalText || "SEARCH";
+      }
+    };
+
+    const setFeedback = (message, isError = false) => {
+      if (!searchFeedback) {
+        return;
+      }
+      searchFeedback.textContent = message;
+      if (isError) {
+        searchFeedback.classList.add("error");
+      } else {
+        searchFeedback.classList.remove("error");
+      }
+      searchFeedback.classList.remove("hidden");
+    };
+
+    const clearFeedback = () => {
+      if (!searchFeedback) {
+        return;
+      }
+      searchFeedback.textContent = "";
+      searchFeedback.classList.add("hidden");
+      searchFeedback.classList.remove("error");
+    };
+
+    const setPresetCoordinates = ({ lat, lng }, source = "manual") => {
+      searchForm.dataset.lat = lat.toString();
+      searchForm.dataset.lng = lng.toString();
+      console.info("foodvibe: preset coordinates stored", { source, lat, lng });
+    };
+
+    const clearPresetCoordinates = () => {
+      delete searchForm.dataset.lat;
+      delete searchForm.dataset.lng;
+    };
+
+    const updateLocationSuggestions = (suggestions) => {
+      suggestionCache.clear();
+      if (locationDatalist) {
+        locationDatalist.innerHTML = "";
+      }
+
+      suggestions.forEach((item) => {
+        suggestionCache.set(item.label, { lat: item.lat, lng: item.lng });
+        if (locationDatalist) {
+          const option = document.createElement("option");
+          option.value = item.label;
+          locationDatalist.appendChild(option);
+        }
+      });
+    };
+
+    const requestLocationSuggestions = async (query) => {
+      try {
+        const url = new URL("https://nominatim.openstreetmap.org/search");
+        url.searchParams.set("format", "jsonv2");
+        url.searchParams.set("addressdetails", "0");
+        url.searchParams.set("limit", "5");
+        url.searchParams.set("q", query);
+
+        const response = await fetch(url.toString(), {
+          headers: {
+            Accept: "application/json",
+            "User-Agent": "foodvibe-app/1.0",
+          },
+        });
+
+        if (!response.ok) {
+          console.warn("foodvibe: autocomplete response not ok", response.status);
+          return [];
+        }
+
+        const data = await response.json();
+        return data
+          .map((entry) => ({
+            label: entry.display_name,
+            lat: parseFloat(entry.lat),
+            lng: parseFloat(entry.lon),
+          }))
+          .filter((entry) => Number.isFinite(entry.lat) && Number.isFinite(entry.lng));
+      } catch (error) {
+        console.warn("foodvibe: autocomplete fetch failed", error);
+        return [];
+      }
+    };
+
+    if (locationField) {
+      const applyCachedSelection = () => {
+        const selection = suggestionCache.get(locationField.value.trim());
+        if (selection) {
+          setPresetCoordinates(selection, "autocomplete");
+        }
+      };
+
+      locationField.addEventListener("input", (event) => {
+        if (suppressLocationInputHandler) {
+          suppressLocationInputHandler = false;
+          return;
+        }
+
+        clearPresetCoordinates();
+
+        const value = event.target.value.trim();
+        if (!value || value.length < 3) {
+          if (autocompleteTimer) {
+            clearTimeout(autocompleteTimer);
+          }
+          updateLocationSuggestions([]);
+          return;
+        }
+
+        if (autocompleteTimer) {
+          clearTimeout(autocompleteTimer);
+        }
+
+        autocompleteTimer = setTimeout(async () => {
+          const query = value;
+          const suggestions = await requestLocationSuggestions(query);
+          if (locationField && locationField.value.trim() !== query) {
+            return;
+          }
+          updateLocationSuggestions(suggestions);
+        }, 300);
+      });
+
+      locationField.addEventListener("change", applyCachedSelection);
+      locationField.addEventListener("blur", applyCachedSelection);
+    }
+
+    if (currentLocationButton && locationField) {
+      currentLocationButton.addEventListener("click", () => {
+        if (!navigator.geolocation) {
+          setFeedback("Geolocation is not supported by your browser.", true);
+          return;
+        }
+
+        const handleSuccess = (position) => {
+          const { latitude, longitude } = position.coords;
+          const coords = {
+            lat: latitude,
+            lng: longitude,
+          };
+
+          suppressLocationInputHandler = true;
+          locationField.value = `${latitude.toFixed(6)},${longitude.toFixed(6)}`;
+          locationField.focus();
+
+          setPresetCoordinates(coords, "browser");
+          setFeedback("Using your current location.");
+          currentLocationButton.disabled = false;
+        };
+
+        const handleError = (error) => {
+          console.warn("foodvibe: current location access failed", error);
+          setFeedback(error.message || "Unable to access your current location.", true);
+          currentLocationButton.disabled = false;
+        };
+
+        currentLocationButton.disabled = true;
+        setFeedback("Fetching your current location...");
+        clearPresetCoordinates();
+        updateLocationSuggestions([]);
+
+        navigator.geolocation.getCurrentPosition(handleSuccess, handleError, {
+          enableHighAccuracy: true,
+          timeout: 7000,
+          maximumAge: 0,
+        });
+      });
+    }
 
     searchForm.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -238,182 +423,6 @@ document.addEventListener("DOMContentLoaded", () => {
         risk,
         radiusFromInput,
       });
-
-      const disableSearch = () => {
-        if (searchButton) {
-          if (!searchButton.dataset.originalText) {
-            searchButton.dataset.originalText = searchButton.textContent || "SEARCH";
-          }
-          searchButton.disabled = true;
-          searchButton.textContent = "Searching...";
-        }
-      };
-
-      const enableSearch = () => {
-        if (searchButton) {
-          searchButton.disabled = false;
-          searchButton.textContent = searchButton.dataset.originalText || "SEARCH";
-        }
-      };
-
-      const setFeedback = (message, isError = false) => {
-        if (!searchFeedback) {
-          return;
-        }
-        searchFeedback.textContent = message;
-        if (isError) {
-          searchFeedback.classList.add("error");
-        } else {
-          searchFeedback.classList.remove("error");
-        }
-        searchFeedback.classList.remove("hidden");
-      };
-
-      const clearFeedback = () => {
-        if (!searchFeedback) {
-          return;
-        }
-        searchFeedback.textContent = "";
-        searchFeedback.classList.add("hidden");
-        searchFeedback.classList.remove("error");
-      };
-
-      const setPresetCoordinates = ({ lat, lng }, source = "manual") => {
-        searchForm.dataset.lat = lat.toString();
-        searchForm.dataset.lng = lng.toString();
-        console.info("foodvibe: preset coordinates stored", { source, lat, lng });
-      };
-
-      const clearPresetCoordinates = () => {
-        delete searchForm.dataset.lat;
-        delete searchForm.dataset.lng;
-      };
-
-      const updateLocationSuggestions = (suggestions) => {
-        suggestionCache.clear();
-        if (locationDatalist) {
-          locationDatalist.innerHTML = "";
-        }
-
-        suggestions.forEach((item) => {
-          suggestionCache.set(item.label, { lat: item.lat, lng: item.lng });
-          if (locationDatalist) {
-            const option = document.createElement("option");
-            option.value = item.label;
-            locationDatalist.appendChild(option);
-          }
-        });
-      };
-
-      const requestLocationSuggestions = async (query) => {
-        try {
-          const url = new URL("https://nominatim.openstreetmap.org/search");
-          url.searchParams.set("format", "jsonv2");
-          url.searchParams.set("addressdetails", "0");
-          url.searchParams.set("limit", "5");
-          url.searchParams.set("q", query);
-
-          const response = await fetch(url.toString(), {
-            headers: {
-              Accept: "application/json",
-              "User-Agent": "foodvibe-app/1.0",
-            },
-          });
-
-          if (!response.ok) {
-            console.warn("foodvibe: autocomplete response not ok", response.status);
-            return [];
-          }
-
-          const data = await response.json();
-          return data
-            .map((entry) => ({
-              label: entry.display_name,
-              lat: parseFloat(entry.lat),
-              lng: parseFloat(entry.lon),
-            }))
-            .filter((entry) => Number.isFinite(entry.lat) && Number.isFinite(entry.lng));
-        } catch (error) {
-          console.warn("foodvibe: autocomplete fetch failed", error);
-          return [];
-        }
-      };
-
-      if (locationField) {
-        const applyCachedSelection = () => {
-          const selection = suggestionCache.get(locationField.value.trim());
-          if (selection) {
-            setPresetCoordinates(selection, "autocomplete");
-          }
-        };
-
-        locationField.addEventListener("input", (event) => {
-          if (suppressLocationInputHandler) {
-            suppressLocationInputHandler = false;
-            return;
-          }
-
-          clearPresetCoordinates();
-
-          const value = event.target.value.trim();
-          if (!value || value.length < 3) {
-            if (autocompleteTimer) {
-              clearTimeout(autocompleteTimer);
-            }
-            updateLocationSuggestions([]);
-            return;
-          }
-
-          if (autocompleteTimer) {
-            clearTimeout(autocompleteTimer);
-          }
-
-          autocompleteTimer = setTimeout(async () => {
-            const query = value;
-            const suggestions = await requestLocationSuggestions(query);
-            if (locationField && locationField.value.trim() !== query) {
-              return;
-            }
-            updateLocationSuggestions(suggestions);
-          }, 300);
-        });
-
-        locationField.addEventListener("change", applyCachedSelection);
-        locationField.addEventListener("blur", applyCachedSelection);
-      }
-
-      if (currentLocationButton) {
-        currentLocationButton.addEventListener("click", async () => {
-          if (!navigator.geolocation) {
-            setFeedback("Geolocation is not supported by your browser.", true);
-            return;
-          }
-
-          try {
-            currentLocationButton.disabled = true;
-            setFeedback("Fetching your current location...");
-            clearPresetCoordinates();
-            updateLocationSuggestions([]);
-            const position = await getCurrentPosition({ timeout: 7000, enableHighAccuracy: true });
-            const coords = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            };
-            suppressLocationInputHandler = true;
-            if (locationField) {
-              locationField.value = `${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`;
-              locationField.focus();
-            }
-            setPresetCoordinates(coords, "browser");
-            setFeedback("Using your current location.");
-          } catch (error) {
-            console.warn("foodvibe: current location access failed", error);
-            setFeedback("Unable to access your current location.", true);
-          } finally {
-            currentLocationButton.disabled = false;
-          }
-        });
-      }
 
       disableSearch();
       clearFeedback();

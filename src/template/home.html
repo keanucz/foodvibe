@@ -1,188 +1,160 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>foodvibe: food finder</title>
-        <link
-            href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;700&display=swap"
-            rel="stylesheet"
-        />
-        <link rel="stylesheet" href="../static/styles.css" />
-        <link
-            rel="stylesheet"
-            href="../static/demon-override.css"
-            id="demon-override"
-            disabled
-        />
-        <script src="../static/scripts.js" defer></script>
-    </head>
-    <body id="body">
-        <div class="container">
-            <div class="nav">
-                <div></div>
+    <link
+      href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../static/styles.css" />
+    <link
+      rel="stylesheet"
+      href="../static/demon-override.css"
+      id="demon-override"
+      disabled
+    />
+    <script src="../static/scripts.js" defer></script>
+  </head>
+  <body id="body">
+    <div class="container">
+      <div class="nav">
+        <div></div>
 
-                <div class="mode-switch">
-                    <label for="mode-toggle">ANGEL</label>
-                    <label class="switch">
-                        <input type="checkbox" id="mode-toggle" />
-                        <span class="slider"></span>
-                    </label>
-                    <label for="mode-toggle">DEMON</label>
-                </div>
+        <div class="mode-switch">
+          <label for="mode-toggle">ANGEL</label>
+          <label class="switch">
+            <input type="checkbox" id="mode-toggle" />
+            <span class="slider"></span>
+          </label>
+          <label for="mode-toggle">DEMON</label>
+        </div>
 
-                <div>
-                    <span style="font-family: var(--header-font)">
-                        <a href="/profile"><u>Welcome, {{.Username}}!</u></a>
-                    </span>
-                </div>
-            </div>
+        <div>
+          <span style="font-family: var(--header-font)">
+            <a href="/profile"><u>Welcome, {{.Username}}!</u></a>
+          </span>
+        </div>
+      </div>
 
-            <h1>foodvibe: food finder</h1>
+      <h1>foodvibe: food finder</h1>
 
-            <form class="search-form" id="search-form">
-                <div class="form-group">
-                    <label for="cuisine">Cuisines / Countries</label>
-                    <select id="cuisine" name="cuisine">
-                        <option value="cn">Chinese</option>
-                        <option value="in">Indian</option>
-                        <option value="it">Italian</option>
-                        <option value="jp">Japanese</option>
-                        <option value="kr">Korean</option>
-                        <option value="pub">Pub</option>
-                        <option value="gr">Greek</option>
-                        <option value="fr">French</option>
-                        <option value="es">Spanish</option>
-                        <option value="us">American</option>
-                        <option value="mx">Mexican</option>
-                        <option value="lucky">I'm feeling lucky</option>
-                    </select>
-                </div>
+      <form class="search-form" id="search-form">
+        <div class="form-group">
+          <label for="cuisine">Cuisines / Countries</label>
+          <select id="cuisine" name="cuisine">
+            <option value="cn">Chinese</option>
+            <option value="in">Indian</option>
+            <option value="it">Italian</option>
+            <option value="jp">Japanese</option>
+            <option value="kr">Korean</option>
+            <option value="pub">Pub</option>
+            <option value="gr">Greek</option>
+            <option value="fr">French</option>
+            <option value="es">Spanish</option>
+            <option value="us">American</option>
+            <option value="mx">Mexican</option>
+            <option value="lucky">I'm feeling lucky</option>
+          </select>
+        </div>
 
-                <div class="form-group location-group">
-                    <label for="location">Your Location</label>
-                    <div class="location-input-row">
-                        <input
-                            type="text"
-                            id="location"
-                            name="location"
-                            placeholder="e.g., Nancy Rothwell Building, Manchester, UK"
-                            list="location-suggestions"
-                            autocomplete="off"
-                            required
-                        />
-                        <button
-                            type="button"
-                            id="use-current-location"
-                            class="secondary-button"
-                        >
-                            Use current location
-                        </button>
-                    </div>
-                    <datalist id="location-suggestions"></datalist>
-                </div>
+        <div class="form-group location-group">
+          <label for="location">Your Location</label>
+          <div class="location-input-row">
+            <input
+              type="text"
+              id="location"
+              name="location"
+              placeholder="e.g., Nancy Rothwell Building, Manchester, UK"
+              list="location-suggestions"
+              autocomplete="off"
+              required
+            />
+            <button
+              type="button"
+              id="use-current-location"
+              class="secondary-button"
+            >
+              Use current location
+            </button>
+          </div>
+          <datalist id="location-suggestions"></datalist>
+        </div>
 
-                <div class="form-group">
-                    <label for="radius">Radius (meters, optional)</label>
-                    <input
-                        type="number"
-                        id="radius"
-                        name="radius"
-                        min="250"
-                        step="50"
-                        placeholder="e.g., 2000"
-                    />
-                </div>
+        <div class="form-group">
+          <label for="radius">Radius (meters, optional)</label>
+          <input
+            type="number"
+            id="radius"
+            name="radius"
+            min="250"
+            step="50"
+            placeholder="e.g., 2000"
+          />
+        </div>
 
-                <div class="form-group">
-                    <label for="risk-slider"
-                        >Risk Slider:
-                        <span id="risk-value">Safe (1)</span></label
-                    >
-                    <input
-                        type="range"
-                        id="risk-slider"
-                        name="risk"
-                        min="1"
-                        max="100"
-                        value="1"
-                    />
-                </div>
+        <div class="form-group">
+          <label for="risk-slider"
+            >Risk Slider: <span id="risk-value">Safe (1)</span></label
+          >
+          <input
+            type="range"
+            id="risk-slider"
+            name="risk"
+            min="1"
+            max="100"
+            value="1"
+          />
+        </div>
 
-                <button type="submit" class="search-button">SEARCH</button>
+        <button type="submit" class="search-button">SEARCH</button>
+      </form>
+
+      <p id="search-feedback" class="hidden"></p>
+
+      <h2>Our top picks of the week :)</h2>
+      <div class="results-grid">
+        {{range .Cards}}
+        <div class="card">
+          <h3>{{.Name}}</h3>
+          <p>Cuisine: {{.Cuisine}}</p>
+          <p>Address: {{.Address}}</p>
+          <button class="visited-button">I VISITED THIS PLACE</button>
+
+          <div class="rating-container hidden">
+            <p class="rating-prompt">Submit Your Rating:</p>
+
+            <form class="rating-form" method="POST" action="/rate">
+              <div class="rate">
+                <input type="radio" id="star1" name="rating" value="5" />
+                <label for="star1" title="5 stars"></label>
+                <input type="radio" id="star2" name="rating" value="4" />
+                <label for="star2" title="4 stars"></label>
+                <input type="radio" id="star3" name="rating" value="3" />
+                <label for="star3" title="3 stars"></label>
+                <input type="radio" id="star4" name="rating" value="2" />
+                <label for="star4" title="2 stars"></label>
+                <input type="radio" id="star5" name="rating" value="1" />
+                <label for="star5" title="1 star"></label>
+              </div>
+
+              <input
+                type="hidden"
+                name="restaurant_id"
+                value="{{.RestaurantID}}"
+              />
+
+              <p class="align-centre">
+                <button type="submit">RATE!</button>
+              </p>
             </form>
 
-            <p id="search-feedback" class="hidden"></p>
-
-            <h2>Our top picks of the week :)</h2>
-            <div class="results-grid">
-                {{range .Cards}}
-                <div class="card">
-                    <h3>{{.Name}}</h3>
-                    <p>Cuisine: {{.Cuisine}}</p>
-                    <p>Address: {{.Address}}</p>
-                    <button class="visited-button">I VISITED THIS PLACE</button>
-
-                    <div class="rating-container hidden">
-                        <p class="rating-prompt">Submit Your Rating:</p>
-
-                        <form class="rating-form" method="POST" action="/rate">
-                            <div class="rate">
-                                <input
-                                    type="radio"
-                                    id="star1"
-                                    name="rating"
-                                    value="5"
-                                />
-                                <label for="star1" title="5 stars"></label>
-                                <input
-                                    type="radio"
-                                    id="star2"
-                                    name="rating"
-                                    value="4"
-                                />
-                                <label for="star2" title="4 stars"></label>
-                                <input
-                                    type="radio"
-                                    id="star3"
-                                    name="rating"
-                                    value="3"
-                                />
-                                <label for="star3" title="3 stars"></label>
-                                <input
-                                    type="radio"
-                                    id="star4"
-                                    name="rating"
-                                    value="2"
-                                />
-                                <label for="star4" title="2 stars"></label>
-                                <input
-                                    type="radio"
-                                    id="star5"
-                                    name="rating"
-                                    value="1"
-                                />
-                                <label for="star5" title="1 star"></label>
-                            </div>
-
-                            <input
-                                type="hidden"
-                                name="restaurant_id"
-                                value="{{.RestaurantID}}"
-                            />
-
-                            <p class="align-centre">
-                                <button type="submit">RATE!</button>
-                            </p>
-                        </form>
-
-                        <p class="rating-feedback hidden">
-                            Thank you for rating!
-                        </p>
-                    </div>
-                </div>
-                {{end}}
-            </div>
+            <p class="rating-feedback hidden">Thank you for rating!</p>
+          </div>
         </div>
-    </body>
+        {{end}}
+      </div>
+    </div>
+  </body>
 </html>

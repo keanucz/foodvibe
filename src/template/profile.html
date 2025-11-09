@@ -1,65 +1,65 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>foodvibe: food finder</title>
-        <link
-            href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;700&display=swap"
-            rel="stylesheet"
-        />
-        <link rel="stylesheet" href="../static/styles.css" />
-        <script src="../static/scripts.js" defer></script>
-    </head>
-    <body id="body">
-        <div class="container">
-            <div class="nav">
-                <div>
-                    <a href="/home">Home</a>
-                </div>
-
-                <div class="mode-switch">
-                    <label for="mode-toggle">ANGEL</label>
-                    <label class="switch">
-                        <input type="checkbox" id="mode-toggle" />
-                        <span class="slider"></span>
-                    </label>
-                    <label for="mode-toggle">DEMON</label>
-                </div>
-
-                <div>
-                    <a href="/profile">Welcome, {{.Username}}</a>
-                </div>
-            </div>
-
-            <h1>My Taste Profile</h1>
-
-            <form class="profile-form" id="profile-form">
-                <table class="profile-table">
-                    <tr>
-                        <th>Dietary Needs</th>
-                        <td>
-                            <input
-                                type="text"
-                                name="dietary-needs"
-                                placeholder="Enter dietary needs"
-                            />
-                        </td>
-                    </tr>
-                    <tr>
-                        <th>Taste Profile</th>
-                        <td>
-                            <input
-                                type="text"
-                                name="taste-profile"
-                                placeholder="Enter taste profile"
-                            />
-                        </td>
-                    </tr>
-                </table>
-
-                <button type="submit" class="edit-button">Save Changes</button>
-            </form>
+    <link
+      href="https://fonts.googleapis.com/css2?family=VT323&family=Inter:wght@400;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../static/styles.css" />
+    <script src="../static/scripts.js" defer></script>
+  </head>
+  <body id="body">
+    <div class="container">
+      <div class="nav">
+        <div>
+          <a href="/home">Home</a>
         </div>
-    </body>
+
+        <div class="mode-switch">
+          <label for="mode-toggle">ANGEL</label>
+          <label class="switch">
+            <input type="checkbox" id="mode-toggle" />
+            <span class="slider"></span>
+          </label>
+          <label for="mode-toggle">DEMON</label>
+        </div>
+
+        <div>
+          <a href="/profile">Welcome, {{.Username}}</a>
+        </div>
+      </div>
+
+      <h1>My Taste Profile</h1>
+
+      <form class="profile-form" id="profile-form">
+        <table class="profile-table">
+          <tr>
+            <th>Dietary Needs</th>
+            <td>
+              <input
+                type="text"
+                name="dietary-needs"
+                placeholder="Enter dietary needs"
+              />
+            </td>
+          </tr>
+          <tr>
+            <th>Taste Profile</th>
+            <td>
+              <input
+                type="text"
+                name="taste-profile"
+                placeholder="Enter taste profile"
+              />
+            </td>
+          </tr>
+        </table>
+
+        <button type="submit" class="edit-button">Save Changes</button>
+      </form>
+    </div>
+  </body>
 </html>

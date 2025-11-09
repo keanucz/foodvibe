@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 
+	"github.com/joho/godotenv"
 	"google.golang.org/adk/cmd/launcher/adk"
 	"google.golang.org/adk/cmd/launcher/full"
 	"google.golang.org/adk/server/restapi/services"
@@ -16,6 +17,12 @@ import (
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Printf("config: no .env file loaded: %v", err)
+	} else {
+		log.Println("config: loaded .env file")
+	}
+
 	ctx := context.Background()
 
 	agent, err := places.NewClassifierAgent(ctx, places.ClassifierConfig{
