@@ -4,7 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"html/template"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -20,6 +23,16 @@ type googleOauthResp struct {
 	Email         string `json:"email"`
 	VerifiedEmail bool   `json:"verified_email"`
 	Picture       string `json:"picture"`
+}
+type Restaurant struct {
+	PlaceID     string  `json:"place_id"`
+	Name        string  `json:"name"`
+	Address     string  `json:"address"`
+	Cuisine     string  `json:"cuisine"`
+	RatingCount int     `json:"rating_count"`
+	Lat         float64 `json:"lat"` // Stored as REAL in SQL
+	Lng         float64 `json:"lng"` // Stored as REAL in SQL
+	Healthy     int     `json:"healthy"`
 }
 
 // for concurrent access
@@ -154,32 +167,66 @@ func main() {
 
 	mux.HandleFunc("/addplace", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			http.Error(w, "Method not allowed. Only POST is supported.", http.StatusMethodNotAllowed)
 			return
 		}
-		// Parse the form data
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "Error parsing form data: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		// Get the form values
-		name := r.FormValue("name")
-		address := r.FormValue("address")
-		latitude := r.FormValue("lat")
-		longitude := r.FormValue("lng")
-		cuisine := r.FormValue("cuisine_type")
-		healthy := r.FormValue("healthy")
-		// Validate the form values
-		if name == "" || address == "" || cuisine == "" || latitude == "" || longitude == "" || healthy == "" {
-			http.Error(w, "Missing required fields", http.StatusBadRequest)
-			return
-		}
-		// Insert the place into the database
-		_, err := db.Exec(`INSERT INTO places (name, address, cuisine, lat, lng, healthy) VALUES (?, ?, ?, ?, ?, ?)`, name, address, cuisine, latitude, longitude, healthy)
+
+		body, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "Error inserting place into database: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Error reading request body.", http.StatusInternalServerError)
 			return
 		}
+		defer r.Body.Close()
+
+		var restaurants []Restaurant
+		if err := json.Unmarshal(body, &restaurants); err != nil {
+			log.Printf("JSON Unmarshal error: %v", err)
+			http.Error(w, "Invalid JSON format: expected an array of restaurant objects.", http.StatusBadRequest)
+			return
+		}
+
+		const insertSQL = `
+			INSERT INTO places(place_id, name, address, cuisine, rating_count, lat, lng, healthy)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+		tx, err := db.Begin()
+		if err != nil {
+			log.Printf("Transaction begin error: %v", err)
+			http.Error(w, "Internal server error: could not start transaction.", http.StatusInternalServerError)
+			return
+		}
+		defer tx.Rollback()
+
+		stmt, err := tx.Prepare(insertSQL)
+		if err != nil {
+			log.Printf("Database prepare error: %v", err)
+			http.Error(w, "Internal server error: could not prepare statement.", http.StatusInternalServerError)
+			return
+		}
+		defer stmt.Close()
+
+		inserted := 0
+		for _, res := range restaurants {
+			_, err := stmt.Exec(res.PlaceID, res.Name, res.Address, res.Cuisine,
+				res.RatingCount, res.Lat, res.Lng, res.Healthy)
+			if err != nil {
+				log.Printf("Insert error for %s: %v", res.Name, err)
+				http.Error(w, fmt.Sprintf("Error inserting %s", res.Name), http.StatusInternalServerError)
+				return
+			}
+			inserted++
+		}
+
+		if err := tx.Commit(); err != nil {
+			http.Error(w, "Commit failed", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":   "success",
+			"inserted": inserted,
+		})
 	})
 
 	// takes the user's location, cuisine prefs and risk as input from the form, and finds all the places
