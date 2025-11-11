@@ -1,0 +1,368 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"log"
+	"net/http"
+	"os"
+	"sync"
+
+	// Using the standard, robust SQLite driver
+	"github.com/google/uuid"
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+)
+
+// Global database connection
+var db *sql.DB
+
+type googleOauthResp struct {
+	Id            string `json:"id"`
+	Email         string `json:"email"`
+	VerifiedEmail bool   `json:"verified_email"`
+	Picture       string `json:"picture"`
+}
+
+// Restaurant struct, adjusted to match the Python script's JSON structure
+// and the database table columns.
+type Restaurant struct {
+	// Note: We use the Python script's exact field names for the JSON decoder
+	ID          int64   `json:"id,omitempty"`
+	Name        string  `json:"name"`
+	Address     string  `json:"address"`
+	Cuisine     string  `json:"cuisine"`
+	RatingCount int     `json:"rating_count"`
+	Lat         float64 `json:"lat"`
+	Lng         float64 `json:"lng"`
+	Healthy     int     `json:"healthy"` // 0 or 1
+}
+
+// Mux is retained but currently unused.
+var mux sync.Mutex
+
+var googleOauthConf = &oauth2.Config{
+	RedirectURL:  "http://localhost:8080/callback",
+	ClientID:     "",
+	ClientSecret: "",
+	Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email"},
+	Endpoint:     google.Endpoint,
+}
+
+func createTables(database *sql.DB) error {
+	tables := [3]string{`CREATE TABLE IF NOT EXISTS sessions (
+		sid TEXT PRIMARY KEY,
+		uid TEXT,
+		FOREIGN KEY(uid) REFERENCES users(id)
+	);`,
+		`CREATE TABLE IF NOT EXISTS users (
+		id TEXT PRIMARY KEY,
+		dietary_reqs TEXT,
+		tastes TEXT
+	);`,
+		// Updated 'places' table to match the robust structure from 'working main.go'
+		`CREATE TABLE IF NOT EXISTS places (
+  		id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    	name TEXT,
+     	address TEXT,
+      	cuisine TEXT,
+       	rating_count INTEGER,
+       	lat REAL,
+       	lng REAL,
+        healthy INTEGER,
+       	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );`}
+
+	for _, v := range tables {
+		if _, err := database.Exec(v); err != nil {
+			log.Println("Error creating sqlite table:", err)
+			return err
+		}
+	}
+	log.Println("Database tables are ready.")
+	return nil
+}
+
+func main() {
+	// Get env vars for accessing the google api
+	clientid := os.Getenv("CLIENT_ID")
+	clientsec := os.Getenv("CLIENT_SECRET")
+	if clientid == "" || clientsec == "" {
+		log.Fatal("CLIENT_ID and CLIENT_SECRET must be set as envvars, quitting")
+	} else {
+		googleOauthConf.ClientID = clientid
+		googleOauthConf.ClientSecret = clientsec
+	}
+
+	// Open db, using the standard sqlite3 driver name
+	var err error
+	db, err = sql.Open("sqlite3", "data/tables.db")
+	if err != nil {
+		log.Fatal("Error opening sqlite database:", err)
+	}
+	defer db.Close()
+
+	// Create the tables
+	if err = createTables(db); err != nil {
+		log.Fatal("Failed to create tables:", err)
+	}
+
+	appMux := http.NewServeMux()
+	appMux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+
+	// --- Authentication Handlers ---
+	appMux.HandleFunc("/login", handleLogin)
+	appMux.HandleFunc("/callback", handleCallback)
+
+	// --- API Endpoints ---
+	appMux.HandleFunc("/addplace", handleAddPlace)
+
+	// --- Web App Handlers (require session_id cookie) ---
+	appMux.HandleFunc("/search", handleSearch) // Still incomplete, but functional skeleton
+	appMux.HandleFunc("/home", handleHome)
+	appMux.HandleFunc("/profile", handleProfile)
+	appMux.HandleFunc("/", handleIndex)
+
+	fmt.Println("Server starting on http://localhost:8080")
+	fmt.Println("Endpoints:")
+	fmt.Println("  POST /addplace   (API from Python script)")
+	fmt.Println("  GET  /login      (Google OAuth)")
+
+	log.Fatal(http.ListenAndServe(":8080", appMux))
+}
+
+// --- Handler Functions ---
+
+// handleAddPlace: Modified to use the robust transaction/prepare pattern from working main.go
+func handleAddPlace(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed. Only POST is supported.", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Expect a JSON array of Restaurant objects
+	var restaurants []Restaurant
+
+	// Decode the incoming JSON array from the request body
+	if err := json.NewDecoder(r.Body).Decode(&restaurants); err != nil {
+		log.Printf("JSON Decode error: %v", err)
+		http.Error(w, "Invalid JSON format: expected an array of restaurant objects.", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	// Use a database transaction for batch insertion.
+	tx, err := db.Begin()
+	if err != nil {
+		log.Printf("Transaction begin error: %v", err)
+		http.Error(w, "Internal server error: could not start transaction.", http.StatusInternalServerError)
+		return
+	}
+	// Defer a rollback in case of failure, ensuring cleanup.
+	defer tx.Rollback()
+
+	// Prepare the SQL statement for insertion into the 'places' table
+	stmt, err := tx.Prepare(`
+		INSERT INTO places (name, address, cuisine, rating_count, lat, lng, healthy)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		log.Printf("Database prepare error: %v", err)
+		http.Error(w, "Internal server error: could not prepare statement.", http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	inserted := 0
+	// Loop through the restaurants and execute the insert statement
+	for _, res := range restaurants {
+		_, err := stmt.Exec(res.Name, res.Address, res.Cuisine,
+			res.RatingCount, res.Lat, res.Lng, res.Healthy)
+		if err != nil {
+			log.Printf("Insert error for %s: %v", res.Name, err)
+			http.Error(w, fmt.Sprintf("Error inserting %s", res.Name), http.StatusInternalServerError)
+			return // Rollback will happen due to the deferred tx.Rollback()
+		}
+		inserted++
+	}
+
+	// Commit the transaction if all inserts succeeded
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Commit failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Send a success response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":   "success",
+		"message":  fmt.Sprintf("Successfully added %d places.", inserted),
+		"inserted": inserted,
+	})
+	log.Printf("Successfully received and stored %d places.", inserted)
+}
+
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, googleOauthConf.AuthCodeURL("state"), http.StatusTemporaryRedirect)
+}
+
+func handleCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		http.Error(w, "Missing code", http.StatusBadRequest)
+		return
+	}
+
+	token, err := googleOauthConf.Exchange(context.Background(), code)
+	if err != nil {
+		http.Error(w, "Token exchange error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	client := googleOauthConf.Client(context.Background(), token)
+	resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+	if err != nil {
+		http.Error(w, "Google response error: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	defer resp.Body.Close()
+
+	var json_resp googleOauthResp
+	if err = json.NewDecoder(resp.Body).Decode(&json_resp); err != nil {
+		http.Error(w, "Error parsing response: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	sessionID := uuid.New().String()
+
+	cookie := &http.Cookie{
+		Name:     "session_id",
+		MaxAge:   60 * 60 * 24 * 7,
+		Value:    sessionID,
+		SameSite: http.SameSiteLaxMode,
+	}
+	// Insert new session
+	if _, err = db.Exec(`INSERT INTO sessions (sid, uid) VALUES (?,?)`, sessionID, json_resp.Id); err != nil {
+		http.Error(w, "Error updating database: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Insert new user if they don't exist
+	if _, err = db.Exec(`INSERT OR IGNORE INTO users (id) VALUES (?)`, json_resp.Id); err != nil {
+		http.Error(w, "Error updating database: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(w, cookie)
+	http.Redirect(w, r, "/home", http.StatusSeeOther)
+}
+
+func handleSearch(w http.ResponseWriter, r *http.Request) {
+	// This function remains an incomplete skeleton, as in the broken main.go
+	if r.URL.Query().Get("risk") == "" || r.URL.Query().Get("cuisine") == "" {
+		http.Error(w, "Missing search parameters (risk or cuisine)", http.StatusBadRequest)
+		return
+	}
+
+	cookie, err := r.Cookie("session_id")
+	if err != nil {
+		http.Error(w, "No session cookie (did you login?)", http.StatusBadRequest)
+		return
+	}
+
+	var uid string
+	err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid)
+	if err != nil {
+		http.Error(w, "Error querying database for user session", http.StatusBadRequest)
+		return
+	}
+
+	// NOTE: The geospatial SQL query (Haversine formula) is still missing here.
+	// This is the next logical step to complete this endpoint.
+
+	w.Write([]byte("Search successful (query implemented, but results not yet fully processed)"))
+}
+
+func handleHome(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session_id")
+	if err == http.ErrNoCookie {
+		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		return
+	} else if err != nil {
+		http.Error(w, "Error finding cookie: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var uid string
+	if err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid); err != nil || uid == "" {
+		http.Redirect(w, r, "/", http.StatusPermanentRedirect)
+		return
+	}
+
+	templ, err := template.ParseFiles("template/home.html")
+	if err != nil {
+		http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err = templ.Execute(w, nil); err != nil {
+		log.Println("Error executing template:", err)
+	}
+}
+
+func handleProfile(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session_id")
+	if err == http.ErrNoCookie {
+		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		return
+	} else if err != nil {
+		http.Error(w, "Error finding cookie: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var uid string
+	if err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid); err != nil || uid == "" {
+		http.Redirect(w, r, "/", http.StatusPermanentRedirect)
+		return
+	}
+
+	templ, err := template.ParseFiles("template/profile.html")
+	if err != nil {
+		http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err = templ.Execute(w, nil); err != nil {
+		log.Println("Error executing template:", err)
+	}
+}
+
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session_id")
+	if err == http.ErrNoCookie {
+		templ, err := template.ParseFiles("template/index.html")
+		if err != nil {
+			http.Error(w, "Error loading template: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err = templ.Execute(w, nil); err != nil {
+			log.Println("Error executing template:", err)
+		}
+	} else if err != nil {
+		http.Error(w, "Error finding cookie: "+err.Error(), http.StatusInternalServerError)
+		return
+	} else {
+		var uid string
+		// Check if the session is valid
+		if err = db.QueryRow(`SELECT uid FROM sessions WHERE sid = ?`, cookie.Value).Scan(&uid); err == nil && uid != "" {
+			http.Redirect(w, r, "/home", http.StatusPermanentRedirect)
+			return
+		}
+		// If not valid, show the index page
+		http.Redirect(w, r, "/", http.StatusPermanentRedirect)
+	}
+}
